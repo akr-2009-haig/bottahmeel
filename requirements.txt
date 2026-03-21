@@ -1,0 +1,11 @@
+python-telegram-bot[job-queue]==21.6
+yt-dlp
+psycopg2-binary
+sqlalchemy
+alembic
+python-dotenv
+aiohttp
+aiofiles
+apscheduler
+pillow
+requests
