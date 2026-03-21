@@ -1,8 +1,10 @@
 import os
-from sqlalchemy import create_engine, text
+import time
+import threading
+from sqlalchemy import create_engine, text, Index
 from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.pool import NullPool
-from .models import Base, BotSettings, AntiFloodSettings, AdminUser, BotLanguage
+from sqlalchemy.pool import QueuePool as QueuedPool
+from .models import Base, BotSettings, AntiFloodSettings, AdminUser, BotLanguage, User, SubscriptionChannel
 import logging
 
 logger = logging.getLogger(__name__)
@@ -11,11 +13,40 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 engine = create_engine(
     DATABASE_URL,
-    poolclass=NullPool,
-    echo=False
+    poolclass=QueuedPool,
+    pool_size=25,
+    max_overflow=50,
+    pool_timeout=30,
+    pool_recycle=1800,
+    pool_pre_ping=True,
+    echo=False,
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# ── TTL Cache للإعدادات المتكررة ─────────────────────────────────────────────
+# يتيح للبوت تحمّل 300,000+ مستخدم دون ضغط مستمر على قاعدة البيانات
+_settings_cache: dict[str, tuple[str, float]] = {}
+_cache_lock = threading.Lock()
+_CACHE_TTL = 30.0  # ثانية
+
+
+def _cache_get(key: str):
+    with _cache_lock:
+        entry = _settings_cache.get(key)
+        if entry and (time.monotonic() - entry[1]) < _CACHE_TTL:
+            return entry[0]
+    return None
+
+
+def _cache_set(key: str, value: str):
+    with _cache_lock:
+        _settings_cache[key] = (value, time.monotonic())
+
+
+def _cache_invalidate(key: str):
+    with _cache_lock:
+        _settings_cache.pop(key, None)
 
 
 WORLD_LANGUAGES = [
@@ -76,6 +107,7 @@ WORLD_LANGUAGES = [
 def init_db():
     Base.metadata.create_all(bind=engine)
     _run_migrations()
+    _create_indexes()
     _seed_defaults()
     _seed_languages()
     logger.info("Database initialized successfully")
@@ -83,15 +115,48 @@ def init_db():
 
 def _run_migrations():
     """Run incremental DB migrations safely."""
+    stmts = [
+        "ALTER TABLE webapp_buttons ADD COLUMN IF NOT EXISTS placement VARCHAR(30) NOT NULL DEFAULT 'inline'",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS download_count INTEGER DEFAULT 0",
+        "ALTER TABLE subscription_channels ADD COLUMN IF NOT EXISTS subscriber_limit INTEGER",
+    ]
     try:
         with engine.connect() as conn:
-            conn.execute(text(
-                "ALTER TABLE webapp_buttons ADD COLUMN IF NOT EXISTS "
-                "placement VARCHAR(30) NOT NULL DEFAULT 'inline'"
-            ))
+            for stmt in stmts:
+                try:
+                    conn.execute(text(stmt))
+                except Exception:
+                    pass
             conn.commit()
     except Exception as e:
-        logger.warning(f"Migration warning (safe to ignore if column exists): {e}")
+        logger.warning(f"Migration warning (safe to ignore): {e}")
+
+
+def _create_indexes():
+    """إنشاء فهارس قاعدة البيانات لتسريع الاستعلامات مع 300k+ مستخدم."""
+    index_cmds = [
+        "CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id)",
+        "CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active)",
+        "CREATE INDEX IF NOT EXISTS idx_users_is_banned ON users(is_banned)",
+        "CREATE INDEX IF NOT EXISTS idx_users_joined_at ON users(joined_at)",
+        "CREATE INDEX IF NOT EXISTS idx_sub_channels_is_backup ON subscription_channels(is_backup)",
+        "CREATE INDEX IF NOT EXISTS idx_sub_channels_is_active ON subscription_channels(is_active)",
+        "CREATE INDEX IF NOT EXISTS idx_sub_channels_chat_id ON subscription_channels(chat_id)",
+        "CREATE INDEX IF NOT EXISTS idx_bot_settings_key ON bot_settings(key)",
+        "CREATE INDEX IF NOT EXISTS idx_admin_users_telegram_id ON admin_users(telegram_id)",
+        "CREATE INDEX IF NOT EXISTS idx_admin_users_is_active ON admin_users(is_active)",
+    ]
+    try:
+        with engine.connect() as conn:
+            for cmd in index_cmds:
+                try:
+                    conn.execute(text(cmd))
+                except Exception:
+                    pass
+            conn.commit()
+        logger.info("Database indexes created/verified.")
+    except Exception as e:
+        logger.warning(f"Index creation warning: {e}")
 
 
 def get_db() -> Session:
@@ -185,10 +250,15 @@ def _seed_languages():
 
 
 def get_setting(key: str, default: str = "") -> str:
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
     db = SessionLocal()
     try:
         setting = db.query(BotSettings).filter_by(key=key).first()
-        return setting.value if setting else default
+        val = setting.value if setting else default
+        _cache_set(key, val)
+        return val
     finally:
         db.close()
 
@@ -202,8 +272,10 @@ def set_setting(key: str, value: str):
         else:
             db.add(BotSettings(key=key, value=value))
         db.commit()
+        _cache_set(key, value)
     except Exception as e:
         db.rollback()
+        _cache_invalidate(key)
         logger.error(f"Error setting {key}: {e}")
     finally:
         db.close()
