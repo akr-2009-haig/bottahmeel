@@ -11,18 +11,59 @@ logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
-engine = create_engine(
-    DATABASE_URL,
-    poolclass=QueuedPool,
-    pool_size=25,
-    max_overflow=50,
-    pool_timeout=30,
-    pool_recycle=1800,
-    pool_pre_ping=True,
-    echo=False,
-)
+engine = None  # Initialized lazily by _create_engine() inside init_db()
+_engine_lock = threading.Lock()
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+class _SessionProxy:
+    """Callable proxy for sessionmaker; initialized by init_db()."""
+
+    def __init__(self):
+        self._factory = None
+
+    def __call__(self, *args, **kwargs):
+        if self._factory is None:
+            raise RuntimeError(
+                "Database not initialized. "
+                "Ensure DATABASE_URL is set and init_db() has been called."
+            )
+        return self._factory(*args, **kwargs)
+
+    def _setup(self, factory):
+        self._factory = factory
+
+
+SessionLocal = _SessionProxy()
+
+
+def _create_engine():
+    """Create the SQLAlchemy engine and session factory from DATABASE_URL.
+
+    Idempotent and thread-safe: subsequent calls are no-ops once initialized.
+    """
+    global engine
+    if engine is not None:
+        return
+    with _engine_lock:
+        if engine is not None:  # double-checked locking
+            return
+        if not DATABASE_URL:
+            raise EnvironmentError(
+                "DATABASE_URL environment variable is not set.\n"
+                "Please add a PostgreSQL connection URL to your environment variables.\n"
+                "Example: DATABASE_URL=postgresql://user:password@host:5432/dbname"
+            )
+        engine = create_engine(
+            DATABASE_URL,
+            poolclass=QueuedPool,
+            pool_size=25,
+            max_overflow=50,
+            pool_timeout=30,
+            pool_recycle=1800,
+            pool_pre_ping=True,
+            echo=False,
+        )
+        SessionLocal._setup(sessionmaker(autocommit=False, autoflush=False, bind=engine))
 
 # ── TTL Cache للإعدادات المتكررة ─────────────────────────────────────────────
 # يتيح للبوت تحمّل 300,000+ مستخدم دون ضغط مستمر على قاعدة البيانات
@@ -105,6 +146,7 @@ WORLD_LANGUAGES = [
 
 
 def init_db():
+    _create_engine()
     Base.metadata.create_all(bind=engine)
     _run_migrations()
     _create_indexes()
