@@ -9,8 +9,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "")
-
 engine = None  # Initialized lazily by _create_engine() inside init_db()
 _engine_lock = threading.Lock()
 
@@ -47,14 +45,15 @@ def _create_engine():
     with _engine_lock:
         if engine is not None:  # double-checked locking
             return
-        if not DATABASE_URL:
+        db_url = os.environ.get("DATABASE_URL", "").strip()
+        if not db_url:
             raise EnvironmentError(
                 "DATABASE_URL environment variable is not set.\n"
                 "Please add a PostgreSQL connection URL to your environment variables.\n"
                 "Example: DATABASE_URL=postgresql://user:password@host:5432/dbname"
             )
         engine = create_engine(
-            DATABASE_URL,
+            db_url,
             poolclass=QueuedPool,
             pool_size=25,
             max_overflow=50,

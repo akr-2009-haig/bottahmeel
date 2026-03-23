@@ -23,8 +23,6 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("yt_dlp").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-BOT_OWNER_ID = int(os.environ.get("BOT_OWNER_ID", "0"))
 
 ADMIN_CB_PREFIXES = [
     "adm_", "ui_",
@@ -114,6 +112,9 @@ async def _post_init(application):
 
 
 def main():
+    BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    BOT_OWNER_ID = int(os.environ.get("BOT_OWNER_ID", "0").strip() or "0")
+
     if not BOT_TOKEN:
         logger.error("TELEGRAM_BOT_TOKEN is not set!")
         return
