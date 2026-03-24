@@ -115,7 +115,7 @@ def claim_job_for_processing(job_id: int, worker_name: str, *, task_id: str | No
         db.commit()
         job = db.query(BackgroundJob).filter_by(id=job_id).first()
         if not job:
-            return
+            return None
         db.expunge(job)
         return job
     finally:

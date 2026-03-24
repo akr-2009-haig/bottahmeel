@@ -144,11 +144,11 @@ Use this checklist when moving from the old inline-processing architecture to th
    - `WORKER_BATCH_SIZE`
    - `WORKER_CONCURRENCY`
    - `WORKER_NAME`
-    - `HEALTHCHECK_PORT`
+   - `HEALTHCHECK_PORT`
    - `RATE_LIMIT_REQUESTS_PER_WINDOW`
    - `RATE_LIMIT_WINDOW_SECONDS`
    - `RATE_LIMIT_BLOCK_SECONDS`
-    - `LOG_LEVEL`
+   - `LOG_LEVEL`
 5. Install required system packages and Python dependencies:
    ```bash
    apt-get update
