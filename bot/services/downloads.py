@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import logging
 from typing import Any
 
 from telegram import User as TelegramUser
 
-from bot.database import Download, SessionLocal, User, get_setting
+from bot.database import Download, PublishChannel, ScheduledPost, SessionLocal, User, get_setting
 from bot.locales import get_string
 from bot.queue import enqueue_job
 from bot.utils.button_engine import build_reply_markup, get_buttons_for_location
@@ -24,6 +25,8 @@ _PLATFORM_COUNT_FIELDS = {
 
 class DownloadService:
     job_type = "download_request"
+    broadcast_job_type = "broadcast_batch"
+    scheduled_post_job_type = "scheduled_post"
 
     @staticmethod
     def enqueue_download(*, user_id: int, chat_id: int, url: str, platform: str, lang: str, status_message_id: int) -> int:
@@ -45,7 +48,109 @@ class DownloadService:
             "broadcast_log_id": broadcast_log_id,
             "offset": offset,
         }
-        return enqueue_job("broadcast_batch", payload, priority=5, max_attempts=3)
+        return enqueue_job(DownloadService.broadcast_job_type, payload, priority=5, max_attempts=3)
+
+    @staticmethod
+    def enqueue_scheduled_post(*, scheduled_post_id: int) -> int:
+        return enqueue_job(
+            DownloadService.scheduled_post_job_type,
+            {"scheduled_post_id": scheduled_post_id},
+            priority=8,
+            max_attempts=3,
+        )
+
+    @staticmethod
+    def enqueue_due_scheduled_posts(*, limit: int = 20) -> list[int]:
+        db = SessionLocal()
+        now = datetime.now(timezone.utc)
+        enqueued_job_ids: list[int] = []
+        try:
+            candidate_ids = [
+                post_id
+                for (post_id,) in (
+                    db.query(ScheduledPost.id)
+                    .filter(
+                        ScheduledPost.is_active.is_(True),
+                        ScheduledPost.is_sent.is_(False),
+                        ScheduledPost.scheduled_at <= now,
+                        (ScheduledPost.queued_at.is_(None) | (ScheduledPost.queued_at < ScheduledPost.scheduled_at)),
+                    )
+                    .order_by(ScheduledPost.scheduled_at.asc(), ScheduledPost.id.asc())
+                    .limit(limit)
+                    .all()
+                )
+            ]
+        finally:
+            db.close()
+
+        for post_id in candidate_ids:
+            claim_db = SessionLocal()
+            try:
+                claimed = (
+                    claim_db.query(ScheduledPost)
+                    .filter(
+                        ScheduledPost.id == post_id,
+                        ScheduledPost.is_active.is_(True),
+                        ScheduledPost.is_sent.is_(False),
+                        ScheduledPost.scheduled_at <= now,
+                        (ScheduledPost.queued_at.is_(None) | (ScheduledPost.queued_at < ScheduledPost.scheduled_at)),
+                    )
+                    .update(
+                        {
+                            ScheduledPost.queued_at: now,
+                            ScheduledPost.last_error: None,
+                        },
+                        synchronize_session=False,
+                    )
+                )
+                if not claimed:
+                    claim_db.rollback()
+                    continue
+                claim_db.commit()
+            finally:
+                claim_db.close()
+
+            try:
+                job_id = DownloadService.enqueue_scheduled_post(scheduled_post_id=post_id)
+            except Exception as exc:
+                reset_db = SessionLocal()
+                try:
+                    post = reset_db.query(ScheduledPost).filter_by(id=post_id).first()
+                    if post:
+                        post.queued_at = None
+                        post.last_error = str(exc)
+                        reset_db.commit()
+                finally:
+                    reset_db.close()
+                logger.exception("Failed to enqueue scheduled post %s: %s", post_id, exc)
+                continue
+
+            update_db = SessionLocal()
+            try:
+                post = update_db.query(ScheduledPost).filter_by(id=post_id).first()
+                if post:
+                    post.last_job_id = job_id
+                    update_db.commit()
+            finally:
+                update_db.close()
+            enqueued_job_ids.append(job_id)
+        return enqueued_job_ids
+
+    @staticmethod
+    def default_scheduled_channel_ids() -> list[int]:
+        db = SessionLocal()
+        try:
+            return [
+                channel.id
+                for channel in (
+                    db.query(PublishChannel)
+                    .filter_by(is_active=True)
+                    .order_by(PublishChannel.id.asc())
+                    .all()
+                )
+            ]
+        finally:
+            db.close()
 
     @staticmethod
     def build_caption(*, media_type: str, lang: str, telegram_user: TelegramUser | None, platform: str) -> str:

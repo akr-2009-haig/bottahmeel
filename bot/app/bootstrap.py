@@ -10,6 +10,7 @@ from bot.config import load_settings
 from bot.database import SessionLocal, init_db
 from bot.handlers.user_handler import callback_handler, help_handler, lang_handler, message_handler, start_handler
 from bot.monitoring.health import start_health_server
+from bot.services import DownloadService
 from bot.temp import cleanup_stale_directories
 
 logger = logging.getLogger(__name__)
@@ -83,11 +84,18 @@ async def _post_init(application: Application) -> None:
     logger.info("Bot commands registered; stale temp directories removed=%s", removed)
     if application.job_queue:
         application.job_queue.run_repeating(_cleanup_temp_job, interval=3600, first=300, name="temp-cleanup")
+        application.job_queue.run_repeating(_enqueue_scheduled_posts_job, interval=30, first=5, name="scheduled-post-dispatch")
 
 
 async def _cleanup_temp_job(context) -> None:
     removed = cleanup_stale_directories()
     logger.info("Periodic temp cleanup completed; removed=%s", removed)
+
+
+async def _enqueue_scheduled_posts_job(context) -> None:
+    enqueued_job_ids = DownloadService.enqueue_due_scheduled_posts()
+    if enqueued_job_ids:
+        logger.info("Enqueued due scheduled posts job_ids=%s", enqueued_job_ids)
 
 
 def bootstrap_application() -> Application:

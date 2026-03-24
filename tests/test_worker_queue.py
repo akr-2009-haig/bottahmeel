@@ -6,7 +6,17 @@ from unittest.mock import AsyncMock, patch
 
 import bot.database.db as db_module
 from bot.config.settings import load_settings
-from bot.database import BackgroundJob, BroadcastLog, Download, JobStatus, User, UserStatus, init_db
+from bot.database import (
+    BackgroundJob,
+    BroadcastLog,
+    Download,
+    JobStatus,
+    PublishChannel,
+    ScheduledPost,
+    User,
+    UserStatus,
+    init_db,
+)
 from bot.queue import claim_job_for_processing, claim_next_job, complete_job, get_queue_stats, recover_stale_processing_jobs
 from bot.queue.jobs import _format_job_error
 from bot.services import DownloadService
@@ -140,10 +150,113 @@ class WorkerQueueTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(log.total_sent, 3)
             self.assertEqual(log.total_failed, 0)
             self.assertIsNotNone(log.finished_at)
+            self.assertEqual(log.status, "completed")
+            self.assertIsNone(log.last_job_id)
         finally:
             db.close()
 
         self.assertEqual(bot.send_message.await_count, 3)
+
+    async def test_enqueue_due_scheduled_posts_dispatches_once_and_worker_completes_post(self):
+        now = datetime.now(timezone.utc)
+        db = self._session()
+        try:
+            channel = PublishChannel(chat_id=-100123456, username="pub1", title="Pub 1", is_active=True)
+            db.add(channel)
+            db.commit()
+            db.refresh(channel)
+            channel_id = channel.id
+            post = ScheduledPost(
+                text="Scheduled hello",
+                channel_ids=[channel_id],
+                scheduled_at=now - timedelta(minutes=1),
+                repeat_type="once",
+                created_by=999,
+                is_active=True,
+                is_sent=False,
+            )
+            db.add(post)
+            db.commit()
+            db.refresh(post)
+            post_id = post.id
+        finally:
+            db.close()
+
+        first_jobs = DownloadService.enqueue_due_scheduled_posts()
+        second_jobs = DownloadService.enqueue_due_scheduled_posts()
+        self.assertEqual(len(first_jobs), 1)
+        self.assertEqual(second_jobs, [])
+
+        job = claim_next_job("scheduled-worker", allowed_job_types=[DownloadService.scheduled_post_job_type])
+        self.assertIsNotNone(job)
+
+        bot = AsyncMock()
+        result = await _process_job(bot, job)
+        complete_job(job.id, result)
+
+        self.assertEqual(result["status"], "sent")
+        bot.send_message.assert_awaited_once_with(chat_id=-100123456, text="Scheduled hello", reply_markup=None)
+
+        db = self._session()
+        try:
+            post = db.query(ScheduledPost).filter_by(id=post_id).first()
+            channel = db.query(PublishChannel).filter_by(id=channel_id).first()
+            persisted_job = db.query(BackgroundJob).filter_by(id=job.id).first()
+            self.assertTrue(post.is_sent)
+            self.assertFalse(post.is_active)
+            self.assertIsNotNone(post.sent_at)
+            self.assertEqual(post.last_job_id, job.id)
+            self.assertEqual(channel.post_count, 1)
+            self.assertEqual(persisted_job.status, JobStatus.COMPLETED)
+        finally:
+            db.close()
+
+    async def test_download_retry_and_failure_update_status_message_in_place(self):
+        db = self._session()
+        try:
+            user = User(
+                telegram_id=777001,
+                first_name="Retry",
+                language_code="en",
+                status=UserStatus.ACTIVE,
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            user_id = user.id
+        finally:
+            db.close()
+
+        job_id = DownloadService.enqueue_download(
+            user_id=user_id,
+            chat_id=555,
+            url="https://drive.google.com/file/d/abc123/view",
+            platform="google_drive",
+            lang="en",
+            status_message_id=44,
+        )
+        job = claim_next_job("retry-worker")
+        self.assertEqual(job.id, job_id)
+
+        bot = AsyncMock()
+        with patch("bot.workers.runner.download_media", new=AsyncMock(side_effect=RuntimeError("temporary failure"))):
+            with self.assertRaises(RuntimeError):
+                await _process_job(bot, job)
+
+        from bot.workers.runner import _notify_download_job_state
+        await _notify_download_job_state(bot, job.payload or {}, state="retry", delay_seconds=30)
+        await _notify_download_job_state(bot, job.payload or {}, state="failed")
+
+        bot.edit_message_text.assert_any_await(
+            chat_id=555,
+            message_id=44,
+            text="🔁 Processing hit a temporary issue. We will retry in about 30 seconds.",
+        )
+        bot.edit_message_text.assert_any_await(
+            chat_id=555,
+            message_id=44,
+            text="❌ We could not complete this request after several attempts. You can resend the link to try again.",
+        )
 
     def test_claim_job_for_processing_is_idempotent_for_same_task_id(self):
         db = self._session()
@@ -224,6 +337,10 @@ class WorkerQueueTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stats["counts"]["pending"], 1)
         self.assertEqual(stats["counts"]["retry"], 1)
         self.assertEqual(stats["counts"]["processing"], 1)
+        self.assertIn("download", stats["job_types"])
+        self.assertEqual(stats["job_types"]["download"]["pending"], 1)
+        self.assertEqual(stats["job_types"]["download"]["retry"], 1)
+        self.assertEqual(stats["job_types"]["download"]["processing"], 1)
         self.assertEqual(stats["ready_count"], 1)
         self.assertEqual(stats["delayed_retry_count"], 1)
         self.assertEqual(stats["stale_processing_count"], 1)
