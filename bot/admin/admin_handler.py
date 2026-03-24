@@ -9,11 +9,29 @@ from sqlalchemy import func
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
+from bot.config import load_settings
 from bot.database import (
-    SessionLocal, User, AdminUser, SubscriptionChannel, PublishChannel,
-    ChannelGroup, ScheduledPost, BroadcastLog, SavedAd, AntiFloodSettings, Download,
-    UserStatus, AdminPermission, get_setting, set_setting, AdminActivityLog
+    BackgroundJob,
+    BroadcastLog,
+    ChannelGroup,
+    Download,
+    JobStatus,
+    PublishChannel,
+    SavedAd,
+    ScheduledPost,
+    SessionLocal,
+    SubscriptionChannel,
+    User,
+    UserStatus,
+    AdminActivityLog,
+    AdminPermission,
+    AdminUser,
+    AntiFloodSettings,
+    WorkerHeartbeat,
+    get_setting,
+    set_setting,
 )
+from bot.queue import get_queue_stats
 from bot.services import DownloadService
 from bot.utils.platforms import PLATFORMS
 from .keyboards import (
@@ -63,6 +81,60 @@ def has_permission(user_id: int, permission: str, db) -> bool:
     if not admin:
         return False
     return permission in (admin.permissions or [])
+
+
+def _job_type_counts(stats: dict, job_type: str) -> dict[str, int]:
+    return stats.get("job_types", {}).get(job_type, {status.value: 0 for status in JobStatus})
+
+
+def _status_badge(status: str) -> str:
+    badges = {
+        "pending": "⏳ قيد الانتظار",
+        "processing": "⚙️ قيد المعالجة",
+        "retry": "🔁 إعادة محاولة",
+        "completed": "✅ مكتمل",
+        "failed": "❌ فشل",
+        "scheduled": "🗓 مجدول",
+    }
+    return badges.get(status, status)
+
+
+def _worker_health_summary(db) -> tuple[int, int]:
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=load_settings().worker_heartbeat_ttl_seconds)
+    workers = db.query(WorkerHeartbeat).all()
+    active = 0
+    stale = 0
+    for worker in workers:
+        if worker.status == "stopped":
+            continue
+        if worker.last_seen and worker.last_seen >= cutoff:
+            active += 1
+        else:
+            stale += 1
+    return active, stale
+
+
+def _scheduled_runtime_status(post: ScheduledPost, job_status_by_id: dict[int, str]) -> str:
+    if post.last_job_id and post.last_job_id in job_status_by_id:
+        return job_status_by_id[post.last_job_id]
+    if post.is_sent:
+        return "completed"
+    if not post.is_active:
+        return "failed" if post.last_error else "pending"
+    if post.scheduled_at and post.scheduled_at > datetime.now(timezone.utc):
+        return "scheduled"
+    if post.last_error:
+        return "failed"
+    return "pending"
+
+
+def _broadcast_runtime_status(log: BroadcastLog) -> str:
+    status = (log.status or "").strip().lower()
+    if status in {"pending", "processing", "completed", "failed"}:
+        return status
+    if log.finished_at:
+        return "completed"
+    return "pending"
 
 
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -534,6 +606,10 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             target = data.replace("do_broadcast_", "")
             await _do_broadcast(query, context, db, target)
 
+        elif data.startswith("adm_bc_progress_"):
+            log_id = int(data.split("_")[-1])
+            await _handle_broadcast_progress(query, db, log_id)
+
         elif data == "adm_bc_create_ad":
             context.user_data["waiting_for"] = "ad_title"
             await query.edit_message_text(
@@ -566,6 +642,7 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sched = db.query(ScheduledPost).filter_by(id=sched_id).first()
             if sched:
                 sched.is_active = False
+                sched.queued_at = None
                 db.commit()
                 await query.answer("⏸ تم إيقاف المنشور", show_alert=True)
             await _handle_sched_list(query, db, 0)
@@ -575,6 +652,8 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sched = db.query(ScheduledPost).filter_by(id=sched_id).first()
             if sched:
                 sched.is_active = True
+                sched.queued_at = None
+                sched.last_error = None
                 db.commit()
                 await query.answer("▶️ تم تشغيل المنشور", show_alert=True)
             await _handle_sched_list(query, db, 0)
@@ -978,9 +1057,20 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "adm_stats_activity":
             total_downloads = db.query(User).with_entities(User.download_count).all()
             total_dl = sum(u[0] for u in total_downloads)
+            stats = get_queue_stats()
+            active_workers, stale_workers = _worker_health_summary(db)
+            download_jobs = _job_type_counts(stats, DownloadService.job_type)
+            broadcast_jobs = _job_type_counts(stats, DownloadService.broadcast_job_type)
+            scheduled_jobs = _job_type_counts(stats, DownloadService.scheduled_post_job_type)
             await query.edit_message_text(
                 f"📈 **إحصائيات النشاط**\n\n"
-                f"📥 إجمالي التحميلات: {total_dl}",
+                f"📥 إجمالي التحميلات: {total_dl}\n"
+                f"👷 العمال النشطون: {active_workers}\n"
+                f"⚠️ العمال المتأخرون: {stale_workers}\n\n"
+                f"📦 التنزيلات — انتظار: {download_jobs['pending']} | معالجة: {download_jobs['processing']} | إعادة: {download_jobs['retry']} | فشل: {download_jobs['failed']}\n"
+                f"📣 الإذاعات — انتظار: {broadcast_jobs['pending']} | معالجة: {broadcast_jobs['processing']} | إعادة: {broadcast_jobs['retry']} | فشل: {broadcast_jobs['failed']}\n"
+                f"🗓 المجدول — انتظار: {scheduled_jobs['pending']} | معالجة: {scheduled_jobs['processing']} | إعادة: {scheduled_jobs['retry']} | فشل: {scheduled_jobs['failed']}\n\n"
+                f"⏱ أقدم مهمة جاهزة: {stats['oldest_ready_age_seconds']} ثانية",
                 reply_markup=back_keyboard("adm_stats"),
                 parse_mode="Markdown"
             )
@@ -1401,6 +1491,63 @@ async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
             context.user_data["waiting_for"] = None
             return
 
+        elif waiting == "sched_text":
+            channel_ids = DownloadService.default_scheduled_channel_ids()
+            if not channel_ids:
+                await update.message.reply_text(
+                    "❌ لا توجد قنوات نشر نشطة حالياً. أضف قناة نشر ثم أعد المحاولة.",
+                    reply_markup=scheduled_menu_keyboard(),
+                )
+                context.user_data["waiting_for"] = None
+                context.user_data.pop("sched_data", None)
+                return
+            context.user_data["sched_data"] = {
+                "text": text,
+                "channel_ids": channel_ids,
+            }
+            context.user_data["waiting_for"] = "sched_time"
+            await update.message.reply_text(
+                "🗓 أرسل وقت النشر بصيغة:\n`2026-03-25 18:30`\n\nسيتم اعتماد التوقيت العالمي UTC.",
+                parse_mode="Markdown",
+            )
+            return
+
+        elif waiting == "sched_time":
+            sched_data = context.user_data.get("sched_data") or {}
+            try:
+                scheduled_at = datetime.strptime(text, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+            except ValueError:
+                await update.message.reply_text("❌ الصيغة غير صحيحة. استخدم الشكل: 2026-03-25 18:30")
+                return
+
+            if scheduled_at <= datetime.now(timezone.utc):
+                await update.message.reply_text("❌ يجب أن يكون وقت النشر في المستقبل.")
+                return
+
+            post = ScheduledPost(
+                text=sched_data.get("text"),
+                channel_ids=sched_data.get("channel_ids") or [],
+                scheduled_at=scheduled_at,
+                repeat_type="once",
+                is_active=True,
+                is_sent=False,
+                created_by=user.id,
+            )
+            db.add(post)
+            db.commit()
+            db.refresh(post)
+            context.user_data["waiting_for"] = None
+            context.user_data.pop("sched_data", None)
+            await update.message.reply_text(
+                "✅ تم حفظ المنشور المجدول.\n\n"
+                f"🆔 المعرف: {post.id}\n"
+                f"🕒 الموعد: {scheduled_at.strftime('%Y-%m-%d %H:%M')} UTC\n"
+                f"📡 القنوات المستهدفة: {len(post.channel_ids or [])}\n"
+                "⚙️ سيتم تحويله إلى مهمة خلفية عند حلول الموعد.",
+                reply_markup=scheduled_menu_keyboard(),
+            )
+            return
+
         elif waiting == "search_admin":
             result = None
             if text.isdigit():
@@ -1731,6 +1878,12 @@ async def _handle_sched_list(query, db, page: int):
     per_page = 5
     posts = db.query(ScheduledPost).order_by(ScheduledPost.scheduled_at).offset(page * per_page).limit(per_page).all()
     total = db.query(ScheduledPost).count()
+    job_ids = [post.last_job_id for post in posts if post.last_job_id]
+    job_status_by_id = {}
+    if job_ids:
+        for job in db.query(BackgroundJob).filter(BackgroundJob.id.in_(job_ids)).all():
+            status = job.status.value if hasattr(job.status, "value") else str(job.status)
+            job_status_by_id[job.id] = status
 
     if not posts:
         await query.edit_message_text(
@@ -1743,10 +1896,11 @@ async def _handle_sched_list(query, db, page: int):
     text = f"📋 **المنشورات المجدولة** ({total})\n\n"
     buttons = []
     for p in posts:
-        status = "✅ نشط" if p.is_active else "⏸ متوقف"
+        status = _status_badge(_scheduled_runtime_status(p, job_status_by_id)) if p.is_active else "⏸ متوقف"
         short_text = (p.text or "بدون نص")[:30]
         sched_time = p.scheduled_at.strftime('%Y-%m-%d %H:%M') if p.scheduled_at else "غير محدد"
-        text += f"• {short_text} | {sched_time} | {status}\n"
+        fail_suffix = f" | ⚠️ {p.fail_count}" if p.fail_count else ""
+        text += f"• {short_text} | {sched_time} | {status}{fail_suffix}\n"
         row = [
             InlineKeyboardButton("⏸ إيقاف" if p.is_active else "▶️ تشغيل",
                                  callback_data=f"{'pause' if p.is_active else 'resume'}_sched_{p.id}"),
@@ -1768,6 +1922,12 @@ async def _handle_sched_list(query, db, page: int):
 
 async def _handle_active_scheduled(query, db):
     posts = db.query(ScheduledPost).filter_by(is_active=True, is_sent=False).all()
+    job_ids = [post.last_job_id for post in posts if post.last_job_id]
+    job_status_by_id = {}
+    if job_ids:
+        for job in db.query(BackgroundJob).filter(BackgroundJob.id.in_(job_ids)).all():
+            status = job.status.value if hasattr(job.status, "value") else str(job.status)
+            job_status_by_id[job.id] = status
     if not posts:
         await query.edit_message_text(
             "⏱ لا توجد منشورات نشطة.",
@@ -1780,7 +1940,7 @@ async def _handle_active_scheduled(query, db):
     for p in posts:
         short = (p.text or "بدون نص")[:30]
         sched = p.scheduled_at.strftime('%Y-%m-%d %H:%M') if p.scheduled_at else "غير محدد"
-        text += f"• {short} | {sched}\n"
+        text += f"• {short} | {sched} | {_status_badge(_scheduled_runtime_status(p, job_status_by_id))}\n"
         buttons.append([
             InlineKeyboardButton(f"⏸ إيقاف", callback_data=f"pause_sched_{p.id}"),
             InlineKeyboardButton(f"🗑 حذف", callback_data=f"delete_sched_{p.id}")
@@ -1880,12 +2040,27 @@ async def _handle_bc_reports(query, db):
     logs = db.query(BroadcastLog).order_by(BroadcastLog.started_at.desc()).limit(5).all()
     total_sent = sum(l.total_sent for l in logs)
     total_failed = sum(l.total_failed for l in logs)
+    stats = get_queue_stats()
+    broadcast_jobs = _job_type_counts(stats, DownloadService.broadcast_job_type)
+    active_broadcasts = db.query(BroadcastLog).filter(BroadcastLog.status.in_(["pending", "processing"])).count()
     text = (
         f"📊 **تقارير الإذاعة**\n\n"
         f"📨 إجمالي المرسلة: {total_sent}\n"
         f"⚠️ إجمالي الفاشلة: {total_failed}\n"
-        f"📊 عدد الإذاعات: {len(logs)}"
+        f"📊 عدد الإذاعات: {len(logs)}\n"
+        f"🚦 الجارية الآن: {active_broadcasts}\n\n"
+        f"⏳ مهام الإذاعة المعلقة: {broadcast_jobs['pending']}\n"
+        f"⚙️ مهام الإذاعة قيد المعالجة: {broadcast_jobs['processing']}\n"
+        f"🔁 إعادة المحاولة: {broadcast_jobs['retry']}\n"
+        f"❌ مهام فاشلة: {broadcast_jobs['failed']}"
     )
+    if logs:
+        text += "\n\n📌 **آخر العمليات**\n"
+        for log in logs:
+            text += (
+                f"• #{log.id} — {_status_badge(_broadcast_runtime_status(log))}"
+                f" | ✅ {log.total_sent} | ❌ {log.total_failed}\n"
+            )
     await query.edit_message_text(text, reply_markup=back_keyboard("adm_broadcast"), parse_mode="Markdown")
 
 
@@ -1894,14 +2069,56 @@ async def _handle_sched_reports(query, db):
     active = db.query(ScheduledPost).filter_by(is_active=True).count()
     sent = db.query(ScheduledPost).filter_by(is_sent=True).count()
     failed = db.query(ScheduledPost).filter(ScheduledPost.fail_count > 0).count()
+    due_now = (
+        db.query(ScheduledPost)
+        .filter(
+            ScheduledPost.is_active.is_(True),
+            ScheduledPost.is_sent.is_(False),
+            ScheduledPost.scheduled_at <= datetime.now(timezone.utc),
+        )
+        .count()
+    )
+    stats = get_queue_stats()
+    scheduled_jobs = _job_type_counts(stats, DownloadService.scheduled_post_job_type)
     text = (
         f"📊 **تقارير النشر المجدول**\n\n"
         f"📨 إجمالي المنشورات: {total}\n"
         f"⏱ النشطة: {active}\n"
         f"✅ المُرسلة: {sent}\n"
-        f"⚠️ الفاشلة: {failed}"
+        f"⚠️ الفاشلة: {failed}\n"
+        f"🕒 المستحقة الآن: {due_now}\n\n"
+        f"⏳ مهام النشر المعلقة: {scheduled_jobs['pending']}\n"
+        f"⚙️ قيد المعالجة: {scheduled_jobs['processing']}\n"
+        f"🔁 إعادة المحاولة: {scheduled_jobs['retry']}\n"
+        f"❌ مهام فاشلة: {scheduled_jobs['failed']}"
     )
     await query.edit_message_text(text, reply_markup=back_keyboard("adm_scheduled"), parse_mode="Markdown")
+
+
+async def _handle_broadcast_progress(query, db, log_id: int):
+    log = db.query(BroadcastLog).filter_by(id=log_id).first()
+    if not log:
+        await query.answer("❌ لم يتم العثور على سجل الإذاعة", show_alert=True)
+        return
+    status = _broadcast_runtime_status(log)
+    text = (
+        f"📣 **تقدم الإذاعة #{log.id}**\n\n"
+        f"🚦 الحالة: {_status_badge(status)}\n"
+        f"✅ تم الإرسال: {log.total_sent}\n"
+        f"❌ فشل: {log.total_failed}\n"
+        f"🕒 بدأت: {log.started_at.strftime('%Y-%m-%d %H:%M') if log.started_at else 'غير معروف'}\n"
+        f"🏁 انتهت: {log.finished_at.strftime('%Y-%m-%d %H:%M') if log.finished_at else 'لم تنتهِ بعد'}"
+    )
+    if log.error_message:
+        text += f"\n⚠️ آخر خطأ: {log.error_message[:120]}"
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 تحديث", callback_data=f"adm_bc_progress_{log.id}")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data="adm_broadcast")],
+        ]),
+        parse_mode="Markdown",
+    )
 
 
 async def _handle_saved_ads(query, db):
@@ -1949,6 +2166,10 @@ async def _do_broadcast(query, context, db, target: str):
         broadcast_log_id=log.id,
         offset=0,
     )
+    log.status = "pending"
+    log.last_job_id = job_id
+    log.error_message = None
+    db.commit()
 
     context.user_data["bc_text"] = ""
     await query.edit_message_text(
@@ -1956,7 +2177,11 @@ async def _do_broadcast(query, context, db, target: str):
         f"🆔 المهمة: `{job_id}`\n"
         f"📣 النوع: {target}\n"
         f"⏳ ستتم المعالجة في الخلفية بواسطة العامل.",
-        reply_markup=back_keyboard("adm_broadcast"),
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("📊 متابعة التقدم", callback_data=f"adm_bc_progress_{log.id}")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data="adm_broadcast"),
+             InlineKeyboardButton("🏠 الرئيسية", callback_data="adm_main")],
+        ]),
         parse_mode="Markdown"
     )
 

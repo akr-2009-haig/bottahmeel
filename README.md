@@ -211,7 +211,7 @@ Verification:
 
 ### Run worker mode
 
-Workers process queued downloads and admin broadcasts:
+Workers process queued downloads, admin broadcasts, and due scheduled posts after the bot intake process dispatches them:
 
 ```bash
 cd /path/to/Karar-bots-downloader
@@ -233,8 +233,10 @@ BOT_MODE=worker WORKER_NAME=download-worker-3 python run_bot.py
 Verification:
 - enqueue a download request and confirm a worker claims it from Redis/Celery
 - queue an admin broadcast and confirm `broadcast_batch` jobs are processed in batches
+- keep at least one polling/webhook app process running so it can scan for due `ScheduledPost` rows and enqueue `scheduled_post` jobs every 30 seconds
+- create a scheduled post from the admin panel and confirm a `scheduled_post` background job appears when its due time arrives
 - watch worker logs for retry/failure events
-- confirm `/queuez` exposes `ready_count`, `delayed_retry_count`, and `stale_processing_count`
+- confirm `/queuez` exposes `ready_count`, `delayed_retry_count`, `stale_processing_count`, and per-job-type counts
 
 ### PostgreSQL production hardening
 

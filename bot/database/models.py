@@ -195,6 +195,9 @@ class ScheduledPost(Base):
     created_by = Column(BigInteger, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     fail_count = Column(Integer, default=0)
+    queued_at = Column(DateTime(timezone=True), nullable=True)
+    last_job_id = Column(Integer, nullable=True)
+    last_error = Column(Text, nullable=True)
 
 
 class BroadcastLog(Base):
@@ -208,6 +211,9 @@ class BroadcastLog(Base):
     sent_by = Column(BigInteger, nullable=False)
     started_at = Column(DateTime(timezone=True), server_default=func.now())
     finished_at = Column(DateTime(timezone=True), nullable=True)
+    status = Column(String(20), default="pending", nullable=False)
+    last_job_id = Column(Integer, nullable=True)
+    error_message = Column(Text, nullable=True)
 
 
 class BotSettings(Base):

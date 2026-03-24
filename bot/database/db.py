@@ -157,6 +157,12 @@ def _run_migrations():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS download_count INTEGER DEFAULT 0",
         "ALTER TABLE subscription_channels ADD COLUMN IF NOT EXISTS subscriber_limit INTEGER",
         "ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS celery_task_id VARCHAR(255)",
+        "ALTER TABLE scheduled_posts ADD COLUMN IF NOT EXISTS queued_at TIMESTAMP",
+        "ALTER TABLE scheduled_posts ADD COLUMN IF NOT EXISTS last_job_id INTEGER",
+        "ALTER TABLE scheduled_posts ADD COLUMN IF NOT EXISTS last_error TEXT",
+        "ALTER TABLE broadcast_logs ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'pending'",
+        "ALTER TABLE broadcast_logs ADD COLUMN IF NOT EXISTS last_job_id INTEGER",
+        "ALTER TABLE broadcast_logs ADD COLUMN IF NOT EXISTS error_message TEXT",
     ]
     try:
         with engine.connect() as conn:
@@ -186,6 +192,8 @@ def _create_indexes():
         "CREATE INDEX IF NOT EXISTS idx_background_jobs_status_created ON background_jobs(status, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_background_jobs_processing_locked ON background_jobs(status, locked_at)",
         "CREATE INDEX IF NOT EXISTS idx_background_jobs_celery_task_id ON background_jobs(celery_task_id)",
+        "CREATE INDEX IF NOT EXISTS idx_scheduled_posts_due_queue ON scheduled_posts(is_active, is_sent, scheduled_at, queued_at)",
+        "CREATE INDEX IF NOT EXISTS idx_broadcast_logs_status_started ON broadcast_logs(status, started_at)",
         "CREATE INDEX IF NOT EXISTS idx_worker_heartbeats_last_seen ON worker_heartbeats(last_seen)",
         "CREATE INDEX IF NOT EXISTS idx_worker_heartbeats_status_last_seen ON worker_heartbeats(status, last_seen)",
         "CREATE INDEX IF NOT EXISTS idx_users_status_id ON users(status, id)",

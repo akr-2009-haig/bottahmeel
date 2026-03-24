@@ -413,6 +413,17 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 status_message_id=wait_msg.message_id,
             )
             logger.info("Queued download job %s for user=%s platform=%s", job_id, db_user.id, platform)
+            await wait_msg.edit_text(
+                get_lang_setting(
+                    "queued_message",
+                    lang,
+                    (
+                        "📥 تم استلام طلبك ووضعه في قائمة المعالجة.\n"
+                        f"🆔 رقم الطلب: {job_id}\n"
+                        "⏳ سيتم تحديث هذه الرسالة عند بدء التنفيذ."
+                    ),
+                )
+            )
         except Exception as exc:
             logger.exception("Failed to enqueue download job: %s", exc)
             await wait_msg.edit_text(get_lang_setting("error_message", lang, get_string("error", lang)))

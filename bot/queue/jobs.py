@@ -303,6 +303,15 @@ def get_queue_stats() -> dict[str, Any]:
         for status, total in db.query(BackgroundJob.status, func.count(BackgroundJob.id)).group_by(BackgroundJob.status).all():
             status_key = status.value if hasattr(status, "value") else str(status)
             counts[status_key] = total
+        job_types: dict[str, dict[str, int]] = {}
+        for job_type, status, total in (
+            db.query(BackgroundJob.job_type, BackgroundJob.status, func.count(BackgroundJob.id))
+            .group_by(BackgroundJob.job_type, BackgroundJob.status)
+            .all()
+        ):
+            status_key = status.value if hasattr(status, "value") else str(status)
+            job_counts = job_types.setdefault(job_type, {job_status.value: 0 for job_status in JobStatus})
+            job_counts[status_key] = total
         ready_filter = and_(
             BackgroundJob.status.in_([JobStatus.PENDING, JobStatus.RETRY]),
             BackgroundJob.available_at <= now,
@@ -351,6 +360,7 @@ def get_queue_stats() -> dict[str, Any]:
         return {
             "backend": _queue_backend(),
             "counts": counts,
+            "job_types": job_types,
             "oldest_pending_age_seconds": _age_seconds(now, oldest_pending[0] if oldest_pending else None),
             "ready_count": int(ready_count),
             "delayed_retry_count": int(delayed_retry_count),
