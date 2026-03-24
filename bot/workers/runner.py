@@ -10,7 +10,14 @@ from telegram import Bot
 from bot.config import load_settings
 from bot.database import AntiFloodSettings, BroadcastLog, SessionLocal, User, UserStatus, get_setting, init_db
 from bot.locales import get_string
-from bot.queue import claim_job_for_processing, claim_next_job, complete_job, fail_job, retry_job
+from bot.queue import (
+    claim_job_for_processing,
+    claim_next_job,
+    complete_job,
+    fail_job,
+    recover_stale_processing_jobs,
+    retry_job,
+)
 from bot.queue.celery_app import get_celery_app
 from bot.services import DownloadService
 from bot.temp import cleanup_path, cleanup_stale_directories
@@ -166,7 +173,20 @@ async def _worker_loop() -> None:
     settings = load_settings()
     bot = _get_worker_bot()
     cleanup_stale_directories()
+    recovery_check_interval = min(max(settings.worker_poll_interval, 5.0), 30.0)
+    next_recovery_check = 0.0
     while True:
+        loop_time = asyncio.get_running_loop().time()
+        if loop_time >= next_recovery_check:
+            recovered = recover_stale_processing_jobs(lock_timeout_seconds=settings.job_lock_timeout_seconds)
+            if recovered["total"]:
+                logger.warning(
+                    "Recovered stale database-queue jobs before polling total=%s retried=%s failed=%s",
+                    recovered["total"],
+                    recovered["retried"],
+                    recovered["failed"],
+                )
+            next_recovery_check = loop_time + recovery_check_interval
         job = claim_next_job(settings.worker_name)
         if not job:
             await asyncio.sleep(settings.worker_poll_interval)
@@ -174,8 +194,16 @@ async def _worker_loop() -> None:
         try:
             result = await _process_job(bot, job)
             complete_job(job.id, result)
+            logger.info("Completed database-backed job %s via worker=%s", job.id, settings.worker_name)
         except Exception as exc:
-            logger.exception("Job %s failed: %s", job.id, exc)
+            logger.exception(
+                "Database-backed job id=%s worker=%s attempt=%s/%s failed: %s",
+                job.id,
+                settings.worker_name,
+                job.attempts,
+                job.max_attempts,
+                exc,
+            )
             if job.attempts >= job.max_attempts:
                 fail_job(job.id, str(exc))
             else:

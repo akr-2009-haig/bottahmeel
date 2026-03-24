@@ -144,6 +144,8 @@ Use this checklist when moving from the old inline-processing architecture to th
    - `WORKER_BATCH_SIZE`
    - `WORKER_CONCURRENCY`
    - `WORKER_NAME`
+   - `WORKER_HEARTBEAT_TTL_SECONDS`
+   - `JOB_LOCK_TIMEOUT_SECONDS`
    - `HEALTHCHECK_PORT`
    - `RATE_LIMIT_REQUESTS_PER_WINDOW`
    - `RATE_LIMIT_WINDOW_SECONDS`
@@ -232,6 +234,89 @@ Verification:
 - enqueue a download request and confirm a worker claims it from Redis/Celery
 - queue an admin broadcast and confirm `broadcast_batch` jobs are processed in batches
 - watch worker logs for retry/failure events
+- confirm `/queuez` exposes `ready_count`, `delayed_retry_count`, and `stale_processing_count`
+
+### PostgreSQL production hardening
+
+For one high-traffic bot, treat PostgreSQL as the system of record for users, downloads, settings, broadcast logs, and background job state:
+
+- Keep PostgreSQL on SSD-backed storage and enable regular backups before every deployment.
+- Use `QUEUE_BACKEND=redis` in production so PostgreSQL stores job metadata while Redis/Celery handles the hot queue traffic.
+- Keep the legacy database-backed queue only as a fallback path; it now automatically reclaims stale `PROCESSING` rows after `JOB_LOCK_TIMEOUT_SECONDS`.
+- The app verifies and creates queue-related indexes at startup, including:
+  - job claim path: `status + available_at + priority + created_at`
+  - backlog/age path: `status + created_at`
+  - stuck processing path: `status + locked_at`
+  - broadcast user scan path: `users(status, id)`
+- Tune `JOB_LOCK_TIMEOUT_SECONDS` to be longer than your slowest expected download job. A low value can cause duplicate recovery of long-running jobs in the legacy DB queue path.
+- Watch for growing `stale_processing_count`, `oldest_pending_age_seconds`, or `oldest_processing_lock_age_seconds` in `/queuez`; these are early signs of worker crashes or a queue bottleneck.
+
+### Backup and restore
+
+Use PostgreSQL custom-format dumps for practical operational recovery:
+
+```bash
+cd /path/to/Karar-bots-downloader
+DATABASE_URL=postgresql://user:password@host:5432/dbname \
+BACKUP_DIR=./backups/postgres \
+RETENTION_DAYS=7 \
+./scripts/postgres_backup.sh
+```
+
+Recommended production approach:
+
+- Run the backup script at least daily; for a busy bot, every 6-12 hours is safer.
+- Keep at least 7 daily backups locally and copy them to separate durable storage managed by your hosting environment.
+- Take an extra manual backup before schema-affecting deployments or major admin changes.
+- Verify that `pg_dump` and `pg_restore` are installed on the operator host.
+- Periodically test a restore into a separate PostgreSQL database; an untested backup is not a recovery plan.
+
+Restore example:
+
+```bash
+cd /path/to/Karar-bots-downloader
+./scripts/postgres_restore.sh ./backups/postgres/karar_bot_20260324T120000Z.dump \
+  postgresql://user:password@host:5432/karar_bot_restore
+```
+
+Practical restore guidance:
+
+1. Stop intake and worker processes before restoring over a live production database.
+2. Prefer restoring into a fresh database first, then point the bot to the restored database after verification.
+3. Run `python run_bot.py worker` only after the restored database passes a quick smoke test (`/readyz`, a real download, and a queue check).
+4. Keep the pre-restore database snapshot until the bot is fully stable again.
+
+### Incident and recovery runbook
+
+#### Intake service restart flow
+
+1. Check `/healthz` for process liveness and `/readyz` for database/broker readiness.
+2. If only the intake service is down, restart the intake process first; workers can continue draining queued work.
+3. In webhook mode, confirm the reverse proxy still forwards `WEBHOOK_PATH` and that `WEBHOOK_SECRET_TOKEN` matches the running config.
+4. After restart, send one real Telegram update and confirm a new background job is created.
+
+#### Worker failure or retry spike
+
+1. Check `/queuez` and worker logs for `stale_processing_count`, `delayed_retry_count`, and retry/failure log lines.
+2. If Redis/Celery workers are failing, inspect the error message on the affected `background_jobs` rows and restart or replace the failing worker instance.
+3. If using the legacy database-backed worker, confirm `JOB_LOCK_TIMEOUT_SECONDS` is sane and allow the automatic stale-job recovery loop to requeue expired `PROCESSING` rows.
+4. If failures are permanent, leave the jobs in `FAILED` until the underlying cause is fixed; avoid blind manual retries during an active outage.
+
+#### Queue backlog handling
+
+1. A rising `ready_count` with healthy broker/database usually means more workers are needed or downloads are slowing down.
+2. Scale worker replicas before restarting the intake service; the intake process should stay lightweight.
+3. A rising `delayed_retry_count` usually points to downstream failures (Telegram send errors, platform download errors, or network issues), not raw queue capacity.
+4. If backlog grows rapidly, temporarily reduce admin broadcast activity until normal download latency returns.
+
+#### Database recovery scenario
+
+1. Freeze writes by stopping the intake and worker processes.
+2. Take a final snapshot/backup of the damaged database state if possible.
+3. Restore the latest healthy dump into a new database using `./scripts/postgres_restore.sh`.
+4. Update `DATABASE_URL`, start one intake instance, and verify `init_db()` completes cleanly.
+5. Start one worker, run one real download end-to-end, then scale workers back out.
+6. Review `background_jobs` for unexpected `FAILED` or stale recovered jobs before declaring the incident closed.
 
 ## Required production services for one high-traffic bot
 
@@ -283,5 +368,5 @@ The health server listens on `HEALTHCHECK_PORT`.
 ## Recommended next steps
 - Add integration tests around worker job processing with a disposable PostgreSQL instance.
 - Add a small Prometheus/OpenTelemetry exporter for queue depth, worker heartbeats, and retry/failure counts.
-- Move broadcast progress reporting into the admin UI.
+- Add a scheduled backup runner (cron/systemd/Kubernetes CronJob) that wraps `scripts/postgres_backup.sh` and ships dumps off-host.
 - Add worker autoscaling and deployment automation around Redis/Celery queue depth.

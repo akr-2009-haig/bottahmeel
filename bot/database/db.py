@@ -182,8 +182,13 @@ def _create_indexes():
         "CREATE INDEX IF NOT EXISTS idx_admin_users_telegram_id ON admin_users(telegram_id)",
         "CREATE INDEX IF NOT EXISTS idx_admin_users_is_active ON admin_users(is_active)",
         "CREATE INDEX IF NOT EXISTS idx_background_jobs_status_available ON background_jobs(status, available_at)",
+        "CREATE INDEX IF NOT EXISTS idx_background_jobs_ready_claim ON background_jobs(status, available_at, priority DESC, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_background_jobs_status_created ON background_jobs(status, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_background_jobs_processing_locked ON background_jobs(status, locked_at)",
         "CREATE INDEX IF NOT EXISTS idx_background_jobs_celery_task_id ON background_jobs(celery_task_id)",
         "CREATE INDEX IF NOT EXISTS idx_worker_heartbeats_last_seen ON worker_heartbeats(last_seen)",
+        "CREATE INDEX IF NOT EXISTS idx_worker_heartbeats_status_last_seen ON worker_heartbeats(status, last_seen)",
+        "CREATE INDEX IF NOT EXISTS idx_users_status_id ON users(status, id)",
     ]
     try:
         with engine.connect() as conn:

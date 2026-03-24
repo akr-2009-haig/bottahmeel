@@ -7,6 +7,7 @@ from .jobs import (
     get_broker_queue_depth,
     get_queue_stats,
     ping_broker,
+    recover_stale_processing_jobs,
     retry_job,
 )
 
@@ -19,5 +20,6 @@ __all__ = [
     "get_broker_queue_depth",
     "get_queue_stats",
     "ping_broker",
+    "recover_stale_processing_jobs",
     "retry_job",
 ]
