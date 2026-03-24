@@ -8,6 +8,7 @@ import bot.database.db as db_module
 from bot.config.settings import load_settings
 from bot.database import BackgroundJob, BroadcastLog, Download, JobStatus, User, UserStatus, init_db
 from bot.queue import claim_job_for_processing, claim_next_job, complete_job, get_queue_stats, recover_stale_processing_jobs
+from bot.queue.jobs import _format_job_error
 from bot.services import DownloadService
 from bot.workers.runner import _process_broadcast, _process_job
 
@@ -144,7 +145,7 @@ class WorkerQueueTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(bot.send_message.await_count, 3)
 
-    async def test_claim_job_for_processing_is_idempotent_for_same_task_id(self):
+    def test_claim_job_for_processing_is_idempotent_for_same_task_id(self):
         db = self._session()
         try:
             user = User(
@@ -181,7 +182,7 @@ class WorkerQueueTests(unittest.IsolatedAsyncioTestCase):
         other_job = claim_job_for_processing(job_id, "celery@test", task_id="task-2")
         self.assertIsNone(other_job)
 
-    async def test_queue_stats_reports_ready_retry_and_stale_processing_counts(self):
+    def test_queue_stats_reports_ready_retry_and_stale_processing_counts(self):
         now = datetime.now(timezone.utc)
         db = self._session()
         try:
@@ -229,7 +230,7 @@ class WorkerQueueTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(stats["oldest_pending_age_seconds"], 180)
         self.assertGreaterEqual(stats["oldest_processing_lock_age_seconds"], 3600)
 
-    async def test_recover_stale_processing_jobs_retries_or_fails_expired_jobs(self):
+    def test_recover_stale_processing_jobs_retries_or_fails_expired_jobs(self):
         now = datetime.now(timezone.utc)
         db = self._session()
         try:
@@ -282,3 +283,12 @@ class WorkerQueueTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Processing lock expired", failed_job.error_message)
         finally:
             db.close()
+
+    def test_format_job_error_preserves_latest_message_when_truncating(self):
+        previous_error = "old-" * 600
+        latest_error = "latest failure details"
+
+        formatted = _format_job_error(previous_error, latest_error)
+
+        self.assertIn(latest_error, formatted)
+        self.assertLessEqual(len(formatted), 2048)

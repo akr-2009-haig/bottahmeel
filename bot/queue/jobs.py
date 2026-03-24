@@ -31,10 +31,20 @@ def _queue_backend() -> str:
 
 
 def _format_job_error(previous_error: str | None, message: str) -> str:
-    combined = message.strip()
-    if previous_error and previous_error.strip() and previous_error.strip() != combined:
-        combined = f"{previous_error.strip()} | {combined}"
-    return combined[-_MAX_ERROR_MESSAGE_LENGTH:]
+    latest_error = message.strip()
+    if len(latest_error) >= _MAX_ERROR_MESSAGE_LENGTH:
+        return latest_error[:_MAX_ERROR_MESSAGE_LENGTH]
+    if not previous_error or not previous_error.strip() or previous_error.strip() == latest_error:
+        return latest_error
+    separator = " | "
+    available_for_previous = _MAX_ERROR_MESSAGE_LENGTH - len(separator) - len(latest_error)
+    if available_for_previous <= 0:
+        return latest_error
+    previous_prefix = previous_error.strip()
+    if len(previous_prefix) > available_for_previous:
+        trim_length = max(available_for_previous - 1, 0)
+        previous_prefix = f"{previous_prefix[:trim_length]}…" if trim_length else ""
+    return f"{previous_prefix}{separator}{latest_error}".strip()
 
 
 def _age_seconds(now: datetime, value: datetime | None) -> int:
