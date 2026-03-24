@@ -88,11 +88,11 @@ FORMAT_LABELS = {
 }
 
 DEFAULT_MESSAGES = {
-    "start_message": "مرحبا بك يا {name} 👋\n\nيمكنني تنزيل الوسائط من TikTok.\nأرسل رابط الفيديو للبدء.",
+    "start_message": "مرحبا بك يا {name} 👋\n\nيمكنني تنزيل الوسائط من عدة منصات مثل TikTok وYouTube وInstagram وReddit وGoogle Drive وLinkedIn حسب تفعيل الإدارة.\nأرسل الرابط للبدء.",
     "subscription_message": "لإستخدام البوت يرجى الإشتراك في القنوات التالية\n📢 اشترك في القنوات التالية",
     "help_message": "🤖 يمكنني تنزيل مقاطع فيديو من TikTok\n\nكيفية التنزيل:\n1. انتقل إلى تطبيق TikTok\n2. اختر مقطع فيديو\n3. انقر على زر ↪️ أو ثلاث نقاط\n4. انقر فوق نسخ الرابط\n5. أرسل الرابط هنا",
     "downloading_message": "⏰┇يرجى الانتظار، يتم قياس حجم التحميل...",
-    "unsupported_message": "⚠️ الرابط غير مدعوم. يرجى إرسال رابط TikTok صحيح.",
+    "unsupported_message": "⚠️ الرابط غير مدعوم حالياً. يرجى إرسال رابط من منصة مدعومة ومفعّلة.",
     "error_message": "❌ حدث خطأ أثناء التحميل. يرجى المحاولة مجدداً.",
     "video_caption": "📥 تم التحميل بنجاح\n\n🤖 @{bot_name}",
     "photo_caption": "🖼 تم التحميل بنجاح\n\n🤖 @{bot_name}",

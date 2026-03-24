@@ -122,6 +122,29 @@ PLATFORMS = {
         "db_key": "reddit_enabled",
         "default_enabled": False,
     },
+    "google_drive": {
+        "name": "Google Drive",
+        "emoji": "📁",
+        "patterns": [
+            r'https?://drive\.google\.com/file/d/\S+',
+            r'https?://drive\.google\.com/open\?id=\S+',
+            r'https?://drive\.google\.com/uc\?id=\S+',
+        ],
+        "db_key": "google_drive_enabled",
+        "default_enabled": False,
+    },
+    "linkedin": {
+        "name": "LinkedIn",
+        "emoji": "💼",
+        "patterns": [
+            r'https?://(www\.)?linkedin\.com/posts/\S+',
+            r'https?://(www\.)?linkedin\.com/feed/update/\S+',
+            r'https?://(www\.)?linkedin\.com/embed/feed/update/\S+',
+            r'https?://lnkd\.in/\S+',
+        ],
+        "db_key": "linkedin_enabled",
+        "default_enabled": False,
+    },
     "vimeo": {
         "name": "Vimeo",
         "emoji": "🎬",
@@ -196,6 +219,12 @@ PLATFORM_OPTS: dict = {
     "reddit": {
         'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
     },
+    "google_drive": {
+        'format': 'best/bestvideo+bestaudio',
+    },
+    "linkedin": {
+        'format': 'best[ext=mp4]/best',
+    },
 }
 
 
@@ -232,13 +261,16 @@ async def download_media(url: str, platform: str = "unknown") -> Tuple[Optional[
 
             image_exts = {"jpg", "jpeg", "png", "webp", "gif"}
             audio_exts = {"mp3", "m4a", "ogg", "wav", "flac", "opus"}
+            video_exts = {"mp4", "m4v", "mov", "mkv", "webm", "avi", "flv", "3gp", "mpeg", "mpg"}
             ext_lower = ext.lower()
             if ext_lower in image_exts:
                 media_type = "photo"
             elif ext_lower in audio_exts:
                 media_type = "audio"
-            else:
+            elif ext_lower in video_exts:
                 media_type = "video"
+            else:
+                media_type = "document"
 
             return filepath, media_type, title
 

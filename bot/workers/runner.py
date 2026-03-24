@@ -75,6 +75,8 @@ async def _process_download(bot: Bot, payload: dict) -> dict:
                     await bot.send_photo(chat_id=chat_id, photo=media_handle, caption=caption, reply_markup=main_markup)
                 elif media_type == "audio":
                     await bot.send_audio(chat_id=chat_id, audio=media_handle, caption=caption, reply_markup=main_markup)
+                elif media_type == "document":
+                    await bot.send_document(chat_id=chat_id, document=media_handle, caption=caption, reply_markup=main_markup)
                 else:
                     await bot.send_video(chat_id=chat_id, video=media_handle, caption=caption, supports_streaming=True, reply_markup=main_markup)
             if extra_markup:

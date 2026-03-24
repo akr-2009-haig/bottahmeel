@@ -55,9 +55,15 @@ class DownloadService:
             cap_key = "photo_caption"
         elif media_type == "audio":
             cap_key = "audio_caption"
+        elif media_type == "document":
+            cap_key = "document_caption"
         else:
             cap_key = "video_caption"
-        template = get_setting(f"{cap_key}_{lang}", get_setting(cap_key, get_string("success_caption", lang, bot_name=bot_name)))
+        fallback_key = "video_caption" if cap_key == "document_caption" else cap_key
+        template = get_setting(
+            f"{cap_key}_{lang}",
+            get_setting(cap_key, get_setting(fallback_key, get_string("success_caption", lang, bot_name=bot_name))),
+        )
         if telegram_user is not None:
             user_name = get_user_name(telegram_user)
         else:
