@@ -182,7 +182,8 @@ def get_queue_stats() -> dict[str, Any]:
     try:
         counts = {status.value: 0 for status in JobStatus}
         for status, total in db.query(BackgroundJob.status, func.count(BackgroundJob.id)).group_by(BackgroundJob.status).all():
-            counts[status.value] = total
+            status_key = status.value if hasattr(status, "value") else str(status)
+            counts[status_key] = total
         oldest_pending = (
             db.query(BackgroundJob.created_at)
             .filter(BackgroundJob.status.in_([JobStatus.PENDING, JobStatus.RETRY]))
@@ -232,18 +233,25 @@ def _dispatch_job(job_id: int, *, priority: int) -> None:
 
     db = SessionLocal()
     try:
+        job = db.query(BackgroundJob).filter_by(id=job_id).first()
         result = process_background_job.apply_async(
             args=[job_id],
             queue=load_settings().queue_name,
             priority=max(0, min(priority, 9)),
         )
-        job = db.query(BackgroundJob).filter_by(id=job_id).first()
         if job:
             job.celery_task_id = result.id
             db.commit()
             logger.info("Queued Redis job %s as Celery task %s", job_id, result.id)
     except Exception:
-        db.rollback()
+        job = db.query(BackgroundJob).filter_by(id=job_id).first()
+        if job:
+            job.status = JobStatus.FAILED
+            job.error_message = "Failed to dispatch job to Redis queue"
+            job.completed_at = datetime.now(timezone.utc)
+            db.commit()
+        else:
+            db.rollback()
         logger.exception("Failed to dispatch job %s to Redis queue", job_id)
         raise
     finally:

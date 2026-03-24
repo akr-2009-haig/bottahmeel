@@ -6,6 +6,9 @@ from bot.config.settings import RuntimeMode, load_settings
 
 
 class SettingsTests(unittest.TestCase):
+    def setUp(self):
+        load_settings.cache_clear()
+
     def tearDown(self):
         load_settings.cache_clear()
 
