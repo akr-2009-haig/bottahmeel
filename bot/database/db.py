@@ -156,6 +156,7 @@ def _run_migrations():
         "ALTER TABLE webapp_buttons ADD COLUMN IF NOT EXISTS placement VARCHAR(30) NOT NULL DEFAULT 'inline'",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS download_count INTEGER DEFAULT 0",
         "ALTER TABLE subscription_channels ADD COLUMN IF NOT EXISTS subscriber_limit INTEGER",
+        "ALTER TABLE background_jobs ADD COLUMN IF NOT EXISTS celery_task_id VARCHAR(255)",
     ]
     try:
         with engine.connect() as conn:
@@ -181,6 +182,8 @@ def _create_indexes():
         "CREATE INDEX IF NOT EXISTS idx_admin_users_telegram_id ON admin_users(telegram_id)",
         "CREATE INDEX IF NOT EXISTS idx_admin_users_is_active ON admin_users(is_active)",
         "CREATE INDEX IF NOT EXISTS idx_background_jobs_status_available ON background_jobs(status, available_at)",
+        "CREATE INDEX IF NOT EXISTS idx_background_jobs_celery_task_id ON background_jobs(celery_task_id)",
+        "CREATE INDEX IF NOT EXISTS idx_worker_heartbeats_last_seen ON worker_heartbeats(last_seen)",
     ]
     try:
         with engine.connect() as conn:
@@ -257,6 +260,7 @@ def _seed_defaults():
             ("dailymotion_disabled_msg", "عذراً، Dailymotion غير مفعل حالياً."),
             ("disabled_platform_generic_msg", "عذراً، هذه المنصة غير مفعلة حالياً في البوت."),
             ("unsupported_platform_msg", "⚠️ هذه المنصة غير مدعومة حالياً. يرجى إرسال رابط من منصة مدعومة."),
+            ("rate_limit_message", "⚠️ الضغط مرتفع حالياً. يرجى الانتظار {seconds} ثانية قبل إرسال طلب جديد."),
             ("text_format", "none"),
         ]
         for key, value in default_settings:

@@ -7,6 +7,7 @@ from telegram.ext import ContextTypes
 
 from bot.database import SessionLocal, SubscriptionChannel, User, UserStatus, BotLanguage, get_setting
 from bot.locales import get_string
+from bot.security import check_download_rate_limit
 from bot.services import DownloadService
 from bot.utils.button_engine import (
     build_reply_markup,
@@ -386,6 +387,16 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 get_setting("disabled_platform_generic_msg", f"عذراً، {platform_name} غير مفعل حالياً في البوت.")
             )
             await update.message.reply_text(disabled_msg)
+            return
+
+        allowed, retry_after = check_download_rate_limit(db_user.id, is_admin=bool(db_user.is_admin))
+        if not allowed:
+            rate_limit_message = get_lang_setting(
+                "rate_limit_message",
+                lang,
+                "⚠️ الضغط مرتفع حالياً. يرجى الانتظار {seconds} ثانية قبل إرسال طلب جديد.",
+            )
+            await update.message.reply_text(rate_limit_message.replace("{seconds}", str(retry_after)))
             return
 
         wait_msg = await update.message.reply_text(

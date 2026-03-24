@@ -3,6 +3,6 @@ from .models import (
     User, Download, SubscriptionChannel, PublishChannel,
     ChannelGroup, AdminUser, AdminActivityLog, ScheduledPost,
     BroadcastLog, BotSettings, SavedAd, AntiFloodSettings,
-    BotButton, WebAppButton, BotLanguage, BackgroundJob,
+    BotButton, WebAppButton, BotLanguage, BackgroundJob, WorkerHeartbeat,
     UserStatus, AdminPermission, JobStatus
 )

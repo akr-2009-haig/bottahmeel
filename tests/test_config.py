@@ -29,3 +29,26 @@ class SettingsTests(unittest.TestCase):
             settings = load_settings()
             settings.validate_for_mode()
             self.assertEqual(settings.mode, RuntimeMode.POLLING)
+
+    def test_queue_backend_defaults_to_database_without_redis_url(self):
+        with patch.dict(os.environ, {
+            "BOT_MODE": RuntimeMode.POLLING.value,
+            "TELEGRAM_BOT_TOKEN": "token",
+            "DATABASE_URL": "sqlite:///test.db",
+            "REDIS_URL": "",
+            "QUEUE_BACKEND": "",
+        }, clear=False):
+            settings = load_settings()
+            self.assertEqual(settings.queue_backend, "database")
+
+    def test_queue_backend_defaults_to_redis_when_redis_url_exists(self):
+        with patch.dict(os.environ, {
+            "BOT_MODE": RuntimeMode.POLLING.value,
+            "TELEGRAM_BOT_TOKEN": "token",
+            "DATABASE_URL": "sqlite:///test.db",
+            "REDIS_URL": "redis://localhost:6379/0",
+            "QUEUE_BACKEND": "",
+        }, clear=False):
+            settings = load_settings()
+            self.assertEqual(settings.queue_backend, "redis")
+            settings.validate_for_mode()
