@@ -16,6 +16,10 @@ from bot.utils.platforms import download_media
 
 logger = logging.getLogger(__name__)
 
+BASE_RETRY_DELAY_SECONDS = 30
+BACKOFF_MULTIPLIER = 2
+MAX_RETRY_DELAY_SECONDS = 300
+
 
 async def _safe_delete_message(bot: Bot, chat_id: int, message_id: int | None) -> None:
     if not message_id:
@@ -148,7 +152,14 @@ async def _worker_loop() -> None:
             if job.attempts >= job.max_attempts:
                 fail_job(job.id, str(exc))
             else:
-                retry_job(job.id, str(exc), delay_seconds=min(300, 30 * job.attempts))
+                retry_job(
+                    job.id,
+                    str(exc),
+                    delay_seconds=min(
+                        MAX_RETRY_DELAY_SECONDS,
+                        BASE_RETRY_DELAY_SECONDS * (BACKOFF_MULTIPLIER ** (job.attempts - 1)),
+                    ),
+                )
             await asyncio.sleep(settings.worker_poll_interval)
 
 

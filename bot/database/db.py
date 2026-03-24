@@ -172,6 +172,7 @@ def _run_migrations():
 def _create_indexes():
     index_cmds = [
         "CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id)",
+        "CREATE INDEX IF NOT EXISTS idx_users_status ON users(status)",
         "CREATE INDEX IF NOT EXISTS idx_users_joined_at ON users(joined_at)",
         "CREATE INDEX IF NOT EXISTS idx_sub_channels_is_backup ON subscription_channels(is_backup)",
         "CREATE INDEX IF NOT EXISTS idx_sub_channels_is_active ON subscription_channels(is_active)",

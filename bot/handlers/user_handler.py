@@ -77,7 +77,7 @@ def build_lang_keyboard(current_lang: str = "ar"):
         label = f"{'✅ ' if lang.code == current_lang else ''}{lang.flag} {lang.name}"
         btns.append(InlineKeyboardButton(label, callback_data=f"lang_{lang.code}"))
 
-    rows = [btns[i:i + 2] for i in range(0, len(btns), 2)]
+    rows = [btns[i:i+2] for i in range(0, len(btns), 2)]
     return InlineKeyboardMarkup(rows)
 
 
@@ -192,15 +192,16 @@ async def _show_welcome(update, context, db_user, name: str, lang: str):
         inline_rows, reply_btns, fallback_inline=fallback
     )
 
-    if isinstance(update, CallbackQuery):
-        chat_id = update.message.chat_id
-        await context.bot.send_message(chat_id, start_msg, reply_markup=main_markup)
-        if extra_markup:
-            await context.bot.send_message(chat_id, "⌨️", reply_markup=extra_markup)
-    else:
+    if not isinstance(update, CallbackQuery):
         await update.message.reply_text(start_msg, reply_markup=main_markup)
         if extra_markup:
             await update.message.reply_text("⌨️", reply_markup=extra_markup)
+        return
+
+    chat_id = update.message.chat_id
+    await context.bot.send_message(chat_id, start_msg, reply_markup=main_markup)
+    if extra_markup:
+        await context.bot.send_message(chat_id, "⌨️", reply_markup=extra_markup)
 
 
 # ─── /help ────────────────────────────────────────────────────────────────────
