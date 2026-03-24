@@ -59,11 +59,13 @@ class DownloadService:
             cap_key = "document_caption"
         else:
             cap_key = "video_caption"
-        fallback_key = "video_caption" if cap_key == "document_caption" else cap_key
-        template = get_setting(
-            f"{cap_key}_{lang}",
-            get_setting(cap_key, get_setting(fallback_key, get_string("success_caption", lang, bot_name=bot_name))),
-        )
+        default_template = get_string("success_caption", lang, bot_name=bot_name)
+        if cap_key == "document_caption":
+            # Documents reuse the video caption when no document-specific caption has been configured yet.
+            base_template = get_setting("document_caption", get_setting("video_caption", default_template))
+        else:
+            base_template = get_setting(cap_key, default_template)
+        template = get_setting(f"{cap_key}_{lang}", base_template)
         if telegram_user is not None:
             user_name = get_user_name(telegram_user)
         else:

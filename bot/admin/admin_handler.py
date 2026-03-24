@@ -15,6 +15,7 @@ from bot.database import (
     UserStatus, AdminPermission, get_setting, set_setting, AdminActivityLog
 )
 from bot.services import DownloadService
+from bot.utils.platforms import PLATFORMS
 from .keyboards import (
     admin_main_keyboard, users_menu_keyboard, admins_menu_keyboard,
     subscription_menu_keyboard, publish_menu_keyboard, broadcast_menu_keyboard,
@@ -1845,8 +1846,6 @@ async def _handle_stats_users(query, db):
 
 
 async def _handle_stats_platforms(query, db):
-    from bot.utils.platforms import PLATFORMS
-
     rows = (
         db.query(Download.platform, func.count(Download.id))
         .filter(Download.success.is_(True))

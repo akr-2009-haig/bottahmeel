@@ -14,6 +14,10 @@ from bot.temp import create_temp_download_dir
 
 logger = logging.getLogger(__name__)
 
+IMAGE_EXTS = {"jpg", "jpeg", "png", "webp", "gif"}
+AUDIO_EXTS = {"mp3", "m4a", "ogg", "wav", "flac", "opus"}
+VIDEO_EXTS = {"mp4", "m4v", "mov", "mkv", "webm", "avi", "flv", "3gp", "mpeg", "mpg"}
+
 PLATFORMS = {
     "tiktok": {
         "name": "TikTok",
@@ -259,17 +263,15 @@ async def download_media(url: str, platform: str = "unknown") -> Tuple[Optional[
                 else:
                     return None, "video", title
 
-            image_exts = {"jpg", "jpeg", "png", "webp", "gif"}
-            audio_exts = {"mp3", "m4a", "ogg", "wav", "flac", "opus"}
-            video_exts = {"mp4", "m4v", "mov", "mkv", "webm", "avi", "flv", "3gp", "mpeg", "mpg"}
             ext_lower = ext.lower()
-            if ext_lower in image_exts:
+            if ext_lower in IMAGE_EXTS:
                 media_type = "photo"
-            elif ext_lower in audio_exts:
+            elif ext_lower in AUDIO_EXTS:
                 media_type = "audio"
-            elif ext_lower in video_exts:
+            elif ext_lower in VIDEO_EXTS:
                 media_type = "video"
             else:
+                logger.warning("[%s] Treating unknown extension '%s' as document for %s", platform, ext_lower, url)
                 media_type = "document"
 
             return filepath, media_type, title
