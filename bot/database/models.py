@@ -86,11 +86,24 @@ class BackgroundJob(Base):
     max_attempts = Column(Integer, default=3, nullable=False)
     priority = Column(Integer, default=0, nullable=False)
     worker_name = Column(String(100), nullable=True)
+    celery_task_id = Column(String(255), nullable=True, index=True)
     available_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
     locked_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class WorkerHeartbeat(Base):
+    __tablename__ = "worker_heartbeats"
+
+    id = Column(Integer, primary_key=True)
+    worker_name = Column(String(255), nullable=False, unique=True, index=True)
+    status = Column(String(50), nullable=False, default="starting")
+    active_task_id = Column(String(255), nullable=True)
+    last_seen = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    last_started_at = Column(DateTime(timezone=True), nullable=True)
+    last_completed_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class SubscriptionChannel(Base):

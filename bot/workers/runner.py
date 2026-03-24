@@ -4,12 +4,14 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
+from celery.exceptions import Retry
 from telegram import Bot
 
 from bot.config import load_settings
-from bot.database import BroadcastLog, SessionLocal, User, UserStatus, get_setting
+from bot.database import AntiFloodSettings, BroadcastLog, SessionLocal, User, UserStatus, get_setting, init_db
 from bot.locales import get_string
-from bot.queue import claim_next_job, complete_job, fail_job, retry_job
+from bot.queue import claim_job_for_processing, claim_next_job, complete_job, fail_job, retry_job
+from bot.queue.celery_app import get_celery_app
 from bot.services import DownloadService
 from bot.temp import cleanup_path, cleanup_stale_directories
 from bot.utils.platforms import download_media
@@ -19,6 +21,22 @@ logger = logging.getLogger(__name__)
 BASE_RETRY_DELAY_SECONDS = 30
 BACKOFF_MULTIPLIER = 2
 MAX_RETRY_DELAY_SECONDS = 300
+celery_app = get_celery_app()
+_worker_bot: Bot | None = None
+
+
+def _get_worker_bot() -> Bot:
+    global _worker_bot
+    if _worker_bot is None:
+        _worker_bot = Bot(token=load_settings().bot_token)
+    return _worker_bot
+
+
+def _retry_delay(attempts: int) -> int:
+    return min(
+        MAX_RETRY_DELAY_SECONDS,
+        BASE_RETRY_DELAY_SECONDS * (BACKOFF_MULTIPLIER ** max(attempts - 1, 0)),
+    )
 
 
 async def _safe_delete_message(bot: Bot, chat_id: int, message_id: int | None) -> None:
@@ -101,6 +119,11 @@ async def _process_broadcast(bot: Bot, payload: dict) -> dict:
     try:
         if target != "users":
             raise RuntimeError(f"Unsupported broadcast target: {target}")
+        antiflood = db.query(AntiFloodSettings).first()
+        delay_between_messages = antiflood.delay_between_messages if antiflood else 1.0
+        messages_per_minute = antiflood.messages_per_minute if antiflood else 20
+        if messages_per_minute and messages_per_minute > 0:
+            delay_between_messages = max(delay_between_messages, 60.0 / messages_per_minute)
         users = (
             db.query(User)
             .filter_by(status=UserStatus.ACTIVE)
@@ -115,6 +138,8 @@ async def _process_broadcast(bot: Bot, payload: dict) -> dict:
                 sent += 1
             except Exception:
                 failed += 1
+            if delay_between_messages > 0:
+                await asyncio.sleep(delay_between_messages)
         log = db.query(BroadcastLog).filter_by(id=log_id).first()
         if log:
             log.total_sent += sent
@@ -139,7 +164,7 @@ async def _process_job(bot: Bot, job) -> dict:
 
 async def _worker_loop() -> None:
     settings = load_settings()
-    bot = Bot(token=settings.bot_token)
+    bot = _get_worker_bot()
     cleanup_stale_directories()
     while True:
         job = claim_next_job(settings.worker_name)
@@ -157,16 +182,64 @@ async def _worker_loop() -> None:
                 retry_job(
                     job.id,
                     str(exc),
-                    delay_seconds=min(
-                        MAX_RETRY_DELAY_SECONDS,
-                        BASE_RETRY_DELAY_SECONDS * (BACKOFF_MULTIPLIER ** (job.attempts - 1)),
-                    ),
+                    delay_seconds=_retry_delay(job.attempts),
                 )
             await asyncio.sleep(settings.worker_poll_interval)
+
+
+def _run_job_once(job_id: int, *, task_id: str | None, worker_name: str) -> dict:
+    claimed_job = claim_job_for_processing(job_id, worker_name, task_id=task_id)
+    if claimed_job is None:
+        logger.info("Skipping job %s because it is already claimed or completed", job_id)
+        return {"status": "skipped", "job_id": job_id}
+    result = asyncio.run(_process_job(_get_worker_bot(), claimed_job))
+    complete_job(claimed_job.id, result, task_id=task_id)
+    logger.info("Completed job %s via worker=%s task_id=%s", claimed_job.id, worker_name, task_id)
+    return result
+
+
+@celery_app.task(bind=True, name="bot.process_background_job", acks_late=True, reject_on_worker_lost=True)
+def process_background_job(self, job_id: int) -> dict:
+    settings = load_settings()
+    worker_name = getattr(self.request, "hostname", None) or settings.worker_name
+    cleanup_stale_directories()
+    try:
+        return _run_job_once(job_id, task_id=self.request.id, worker_name=worker_name)
+    except Retry:
+        raise
+    except Exception as exc:
+        logger.exception("Celery job %s failed on worker %s: %s", job_id, worker_name, exc)
+        claimed_job = claim_job_for_processing(job_id, worker_name, task_id=self.request.id)
+        if claimed_job is None:
+            raise
+        if claimed_job.attempts >= claimed_job.max_attempts:
+            fail_job(claimed_job.id, str(exc), task_id=self.request.id)
+            raise
+        delay_seconds = _retry_delay(claimed_job.attempts)
+        retry_job(claimed_job.id, str(exc), delay_seconds=delay_seconds, task_id=self.request.id)
+        raise self.retry(exc=exc, countdown=delay_seconds)
 
 
 def run_worker() -> None:
     settings = load_settings()
     settings.validate_for_mode()
-    logger.info("Starting worker %s", settings.worker_name)
+    init_db()
+    cleanup_stale_directories()
+    if settings.queue_backend == "redis":
+        logger.info(
+            "Starting Redis-backed Celery worker name=%s queue=%s concurrency=%s",
+            settings.worker_name,
+            settings.queue_name,
+            settings.worker_concurrency,
+        )
+        celery_app.worker_main([
+            "worker",
+            f"--loglevel={settings.log_level.lower()}",
+            f"--hostname={settings.worker_name}@%h",
+            f"--concurrency={settings.worker_concurrency}",
+            f"--queues={settings.queue_name}",
+            "--prefetch-multiplier=1",
+        ])
+        return
+    logger.warning("Starting legacy database-backed worker loop because QUEUE_BACKEND=%s", settings.queue_backend)
     asyncio.run(_worker_loop())

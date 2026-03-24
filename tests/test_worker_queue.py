@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 import bot.database.db as db_module
 from bot.config.settings import load_settings
 from bot.database import BackgroundJob, BroadcastLog, Download, User, UserStatus, init_db
-from bot.queue import claim_next_job, complete_job
+from bot.queue import claim_job_for_processing, claim_next_job, complete_job
 from bot.services import DownloadService
 from bot.workers.runner import _process_broadcast, _process_job
 
@@ -142,3 +142,40 @@ class WorkerQueueTests(unittest.IsolatedAsyncioTestCase):
             db.close()
 
         self.assertEqual(bot.send_message.await_count, 3)
+
+    async def test_claim_job_for_processing_is_idempotent_for_same_task_id(self):
+        db = self._session()
+        try:
+            user = User(
+                telegram_id=54321,
+                first_name="Queue",
+                last_name="Tester",
+                language_code="en",
+                status=UserStatus.ACTIVE,
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            user_id = user.id
+        finally:
+            db.close()
+
+        job_id = DownloadService.enqueue_download(
+            user_id=user_id,
+            chat_id=888,
+            url="https://drive.google.com/file/d/abc123/view",
+            platform="google_drive",
+            lang="en",
+            status_message_id=66,
+        )
+
+        job = claim_job_for_processing(job_id, "celery@test", task_id="task-1")
+        self.assertIsNotNone(job)
+        self.assertEqual(job.attempts, 1)
+
+        same_job = claim_job_for_processing(job_id, "celery@test", task_id="task-1")
+        self.assertIsNotNone(same_job)
+        self.assertEqual(same_job.attempts, 1)
+
+        other_job = claim_job_for_processing(job_id, "celery@test", task_id="task-2")
+        self.assertIsNone(other_job)

@@ -18,6 +18,10 @@ def main():
         return
 
     logger.info("Bootstrapping bot in %s mode", settings.mode.value)
+    if settings.mode is RuntimeMode.POLLING:
+        logger.warning("Polling mode is intended for local/dev usage. Use webhook mode with Redis-backed workers for production.")
+    if settings.mode is RuntimeMode.WEBHOOK and not settings.webhook_secret_token:
+        logger.warning("WEBHOOK_SECRET_TOKEN is not set. Configure it in production to harden Telegram webhook intake.")
     app = bootstrap_application()
 
     if settings.mode is RuntimeMode.WEBHOOK:
@@ -28,6 +32,7 @@ def main():
             port=settings.port,
             url_path=settings.webhook_path.lstrip('/'),
             webhook_url=webhook_url,
+            secret_token=settings.webhook_secret_token or None,
             drop_pending_updates=True,
             allowed_updates=None,
         )
