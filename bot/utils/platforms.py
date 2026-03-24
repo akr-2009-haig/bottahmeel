@@ -6,10 +6,11 @@ import re
 import os
 import logging
 import asyncio
-import tempfile
 from typing import Optional, Tuple, List
 
 import yt_dlp
+
+from bot.temp import create_temp_download_dir
 
 logger = logging.getLogger(__name__)
 
@@ -145,10 +146,6 @@ PLATFORMS = {
 
 
 def detect_platform(text: str) -> Tuple[Optional[str], Optional[str]]:
-    """
-    Detect which platform a URL belongs to.
-    Returns: (url, platform_key) or (None, None)
-    """
     urls = re.findall(r'https?://\S+', text)
     for url in urls:
         url = url.rstrip('.,;!?)')
@@ -160,7 +157,6 @@ def detect_platform(text: str) -> Tuple[Optional[str], Optional[str]]:
 
 
 def is_any_url(text: str) -> bool:
-    """Check if text contains any URL."""
     return bool(re.search(r'https?://\S+', text))
 
 
@@ -204,19 +200,12 @@ PLATFORM_OPTS: dict = {
 
 
 async def download_media(url: str, platform: str = "unknown") -> Tuple[Optional[str], str, str]:
-    """
-    Universal media downloader using yt-dlp.
-    Returns: (file_path, media_type, title)
-    media_type: 'video' | 'photo' | 'audio'
-    """
-    tmp_dir = tempfile.mkdtemp()
+    tmp_dir = create_temp_download_dir(platform)
     outtmpl = os.path.join(tmp_dir, '%(id)s.%(ext)s')
 
     opts = {**YDL_BASE_OPTS}
-    platform_specific = PLATFORM_OPTS.get(platform, {})
-    opts.update(platform_specific)
+    opts.update(PLATFORM_OPTS.get(platform, {}))
     opts['outtmpl'] = outtmpl
-
     if 'format' not in opts:
         opts['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
 
@@ -241,12 +230,12 @@ async def download_media(url: str, platform: str = "unknown") -> Tuple[Optional[
                 else:
                     return None, "video", title
 
-            IMAGE_EXTS = {"jpg", "jpeg", "png", "webp", "gif"}
-            AUDIO_EXTS = {"mp3", "m4a", "ogg", "wav", "flac", "opus"}
+            image_exts = {"jpg", "jpeg", "png", "webp", "gif"}
+            audio_exts = {"mp3", "m4a", "ogg", "wav", "flac", "opus"}
             ext_lower = ext.lower()
-            if ext_lower in IMAGE_EXTS:
+            if ext_lower in image_exts:
                 media_type = "photo"
-            elif ext_lower in AUDIO_EXTS:
+            elif ext_lower in audio_exts:
                 media_type = "audio"
             else:
                 media_type = "video"
@@ -254,15 +243,13 @@ async def download_media(url: str, platform: str = "unknown") -> Tuple[Optional[
             return filepath, media_type, title
 
     try:
-        result = await loop.run_in_executor(None, _download)
-        return result
+        return await loop.run_in_executor(None, _download)
     except Exception as e:
         logger.error(f"[{platform}] Download error: {e}")
         return None, "video", ""
 
 
 def get_platform_info(platform_key: str) -> dict:
-    """Get platform display info."""
     return PLATFORMS.get(platform_key, {
         "name": platform_key.title(),
         "emoji": "📥",
@@ -272,5 +259,4 @@ def get_platform_info(platform_key: str) -> dict:
 
 
 def all_platforms() -> List[str]:
-    """Return list of all platform keys in order."""
     return list(PLATFORMS.keys())

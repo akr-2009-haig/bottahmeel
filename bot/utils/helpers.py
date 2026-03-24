@@ -7,8 +7,9 @@ from .platforms import (
     is_any_url,
     PLATFORMS,
 )
-import os
 import logging
+
+from bot.temp import cleanup_path
 
 logger = logging.getLogger(__name__)
 
@@ -25,14 +26,7 @@ async def download_tiktok(url: str):
 
 
 def cleanup_file(filepath: str):
-    try:
-        if filepath and os.path.exists(filepath):
-            os.remove(filepath)
-            tmp_dir = os.path.dirname(filepath)
-            if os.path.exists(tmp_dir) and not os.listdir(tmp_dir):
-                os.rmdir(tmp_dir)
-    except Exception as e:
-        logger.error(f"Cleanup error: {e}")
+    cleanup_path(filepath)
 
 
 def get_user_name(user) -> str:
