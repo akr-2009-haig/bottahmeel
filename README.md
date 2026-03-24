@@ -97,6 +97,7 @@ BOT_MODE=webhook WEBHOOK_URL=https://example.com python run_bot.py
 A basic production-like stack is included:
 - `Dockerfile`
 - `docker-compose.yml`
+- `.dockerignore`
 - `.env.example`
 
 Typical deployment layout:
@@ -104,6 +105,106 @@ Typical deployment layout:
 - one or more `worker` instances for heavy media work
 - one PostgreSQL instance
 - one Redis instance
+
+## Large-launch deployment blueprint (up to ~2 million users)
+
+For a large public launch, keep the intake path light and scale the worker side horizontally. A practical first production shape is:
+
+- **1-2 webhook intake instances**
+  - 2 vCPU, 2-4 GB RAM each
+  - only accepts Telegram updates, validates requests, and enqueues jobs
+- **4-8 worker instances**
+  - 4 vCPU, 4-8 GB RAM each
+  - sized based on average media size, `yt-dlp` latency, and queue depth
+- **1 managed PostgreSQL instance**
+  - start around 4 vCPU / 8-16 GB RAM / fast SSD
+  - use automated backups and connection pooling if available
+- **1 managed Redis instance**
+  - start around 2 vCPU / 4-8 GB RAM
+  - keep Redis dedicated to queue traffic
+- **1 reverse proxy / load balancer**
+  - Nginx, Caddy, HAProxy, or a managed ingress
+  - terminates TLS and forwards only the webhook path to the intake service
+
+Important note: no single static server size can guarantee support for 2 million users by itself. This codebase is designed for queue-based horizontal scaling, so the real capacity comes from:
+
+- webhook mode instead of polling
+- enough worker replicas
+- healthy Redis/PostgreSQL infrastructure
+- monitoring `/readyz` and `/queuez`
+- fast SSD storage and good outbound bandwidth
+
+### Step-by-step Ubuntu server deployment
+
+This is the simplest serious production path if you want to deploy from GitHub onto your own Linux server:
+
+1. Provision an Ubuntu 24.04 or 22.04 server with Docker and Docker Compose plugin support.
+2. Point your public DNS record to the server IP.
+3. Install Docker:
+   ```bash
+   sudo apt-get update
+   sudo apt-get install -y ca-certificates curl gnupg
+   sudo install -m 0755 -d /etc/apt/keyrings
+   curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+   echo \
+     "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+     $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+     sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+   sudo apt-get update
+   sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+   ```
+4. Clone the repository and prepare env vars:
+   ```bash
+   git clone https://github.com/akr-2009-haig/Karar-bots-downloader.git
+   cd Karar-bots-downloader
+   cp .env.example .env
+   ```
+5. Edit `.env` and set at minimum:
+   - `TELEGRAM_BOT_TOKEN`
+   - `BOT_OWNER_ID`
+   - `DATABASE_URL`
+   - `REDIS_URL`
+   - `BOT_MODE=webhook`
+   - `WEBHOOK_URL=https://your-domain.example.com`
+   - `WEBHOOK_SECRET_TOKEN=<strong-random-secret>`
+   - `QUEUE_BACKEND=redis`
+6. Start the stack:
+   ```bash
+   docker compose up -d --build
+   ```
+7. Scale workers when needed:
+   ```bash
+   docker compose up -d --scale worker=4
+   ```
+8. Verify the deployment:
+   ```bash
+   curl http://127.0.0.1:8081/healthz
+   curl http://127.0.0.1:8081/readyz
+   curl http://127.0.0.1:8081/queuez
+   ```
+9. Put Nginx/Caddy or a cloud load balancer in front of the webhook port and enable TLS before switching public traffic.
+
+### GitHub-integrated hosting options
+
+If you want your deployment workflow to start from GitHub pushes, these platforms integrate well with this repository shape:
+
+- **GitHub Actions + Ubuntu VPS** (Hetzner, DigitalOcean, Contabo, Akamai/Linode, OVH)
+  - best balance of control, cost, and performance
+  - use GitHub Actions for build/deploy and keep PostgreSQL/Redis managed or separate
+- **Railway**
+  - easy GitHub-connected deploys
+  - best for moderate traffic or early production, not the first choice for the largest sustained launch
+- **Render**
+  - simple GitHub integration and managed TLS
+  - easier than a VPS, but less control for very large scale
+- **Fly.io**
+  - GitHub-friendly and good for globally distributed webhook intake
+  - works best when you are comfortable with Docker-based deploys
+- **Google Cloud Run / AWS App Runner**
+  - strong GitHub automation paths and elastic scaling
+  - pair with managed PostgreSQL/Redis equivalents for serious production
+
+For the biggest launch, the safest default is usually **GitHub + VPS/cloud VM + managed PostgreSQL + managed Redis + webhook mode + multiple workers**.
 
 ## Migration checklist from the old architecture
 

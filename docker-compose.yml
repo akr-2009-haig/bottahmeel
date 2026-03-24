@@ -2,6 +2,7 @@ services:
   bot:
     build: .
     command: python run_bot.py
+    restart: unless-stopped
     env_file:
       - .env
     depends_on:
@@ -10,10 +11,21 @@ services:
     ports:
       - "8080:8080"
       - "8081:8081"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os, urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"HEALTHCHECK_PORT\", \"8081\")}/healthz', timeout=5)"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
   worker:
     build: .
     command: python run_bot.py worker
+    restart: unless-stopped
     env_file:
       - .env
     depends_on:
@@ -22,6 +34,7 @@ services:
 
   db:
     image: postgres:16
+    restart: unless-stopped
     environment:
       POSTGRES_DB: karar_bot
       POSTGRES_USER: postgres
@@ -33,6 +46,7 @@ services:
 
   redis:
     image: redis:7
+    restart: unless-stopped
     ports:
       - "6379:6379"
 

@@ -1,8 +1,9 @@
 ╔══════════════════════════════════════════════════════════════════════════════════╗
-║          دليل استضافة بوت تيليغرام — كل الخيارات مع الإعداد من الهاتف          ║
+║      دليل استضافة بوت تيليغرام — تجهيز الرفع الكبير حتى 2,000,000 مستخدم      ║
 ╚══════════════════════════════════════════════════════════════════════════════════╝
 
-هذا الدليل يشرح جميع خيارات الاستضافة المناسبة لبوت تيليغرام يدعم 300,000+ مستخدم،
+هذا الدليل يشرح جميع خيارات الاستضافة المناسبة لبوت تيليغرام مع خطة رفع عملية
+تصلح لانطلاقة كبيرة قد تصل إلى 2,000,000 مستخدم عند توزيع الحمل بشكل صحيح،
 مع طريقة الإعداد من الهاتف بدون حاجة للابتوب.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -10,9 +11,18 @@
 📌 المتطلبات الأساسية لهذا البوت:
   • Python 3.11+
   • PostgreSQL 14+
-  • RAM: 512 MB كحد أدنى (1 GB موصى به)
-  • CPU: 1 core كحد أدنى
+  • RAM: 512 MB كحد أدنى للتجربة فقط
+  • CPU: 1 core كحد أدنى للتجربة فقط
   • اتصال إنترنت مستمر (uptime 99%+)
+
+📌 متطلبات الانطلاقة الكبرى الموصى بها:
+  • Intake/Webhook: عدد 1 إلى 2 خدمة، لكل خدمة 2 vCPU و 2-4 GB RAM
+  • Workers: عدد 4 إلى 8 خدمات كبداية، لكل Worker ‏4 vCPU و 4-8 GB RAM
+  • PostgreSQL: 4 vCPU و 8-16 GB RAM مع SSD سريع ونسخ احتياطي تلقائي
+  • Redis: 2 vCPU و 4-8 GB RAM
+  • Reverse Proxy / Load Balancer: Nginx أو Caddy أو خدمة سحابية مماثلة
+  • تخزين: NVMe / SSD فقط
+  • نمط التشغيل: Webhook + Redis + Workers متعددين
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -34,7 +44,7 @@
 العيوب:
   ❌ البوت ينام بعد فترة خمول في الخطة المجانية
   ❌ محدودية في الذاكرة والمعالج
-  ❌ غير مناسب لـ 300k+ مستخدم في الخطة المجانية
+  ❌ غير مناسب للإطلاقات الكبيرة أو الأحمال العالية في الخطة المجانية
 
 الإعداد من الهاتف:
   1. افتح replit.com من متصفح الهاتف
@@ -118,7 +128,7 @@
   ✅ أرخص VPS موثوق في السوق
   ✅ سرعة عالية (1Gbps)
   ✅ uptime 99.9%
-  ✅ مناسب تماماً لـ 300k+ مستخدم
+  ✅ مناسب جداً للإطلاقات الكبيرة مع بنية صحيحة
   ✅ تحكم كامل في السيرفر
 
 العيوب:
@@ -222,7 +232,7 @@
   ✅ يتوسع تلقائياً مع عدد المستخدمين
   ✅ تدفع فقط عند الاستخدام الفعلي
   ✅ uptime 99.99%
-  ✅ مناسب جداً لـ 300k+ مستخدم بضغط عالٍ
+  ✅ مناسب جداً للإطلاقات الكبيرة بضغط عالٍ
 
 العيوب:
   ❌ إعداد معقد نسبياً
@@ -259,7 +269,7 @@
   ✅ خوادم في مناطق متعددة
   ✅ Managed PostgreSQL ممتاز
   ✅ إعداد من الهاتف سهل
-  ✅ مناسب لـ 300k+ مستخدم
+  ✅ مناسب جداً عند استخدام Docker وWebhook بشكل صحيح
 
 العيوب:
   ❌ يحتاج Dockerfile
@@ -290,7 +300,7 @@
 📊 جدول مقارنة شامل:
 
 ┌─────────────────────┬──────────┬──────────┬──────────┬─────────┬───────────────────┐
-│ الاستضافة           │ السعر    │ السهولة  │ الأداء   │ من الهاتف│ مناسب 300k+      │
+│ الاستضافة           │ السعر    │ السهولة  │ الأداء   │ من الهاتف│ مناسب للإطلاق الكبير │
 ├─────────────────────┼──────────┼──────────┼──────────┼─────────┼───────────────────┤
 │ Replit              │ مجاني/$7 │ ⭐⭐⭐⭐⭐   │ ⭐⭐       │ ✅ سهل  │ مع Hacker Plan   │
 │ Railway             │ $5 رصيد  │ ⭐⭐⭐⭐    │ ⭐⭐⭐      │ ✅ سهل  │ نعم              │
@@ -323,6 +333,105 @@
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+🚀 خارطة رفع موصى بها لهذا المستودع حتى 2,000,000 مستخدم:
+
+القاعدة الأهم:
+  هذا المشروع لا يصبح مناسباً لملايين المستخدمين بسبب "سيرفر واحد خارق" فقط،
+  بل بسبب تقسيم العمل بين:
+  - intake / webhook
+  - worker processes
+  - Redis queue
+  - PostgreSQL
+  - reverse proxy
+
+البنية الموصى بها للانطلاقة:
+  1. خدمة Webhook واحدة على الأقل (ويفضّل 2 عند بدء الحمل الحقيقي)
+  2. من 4 إلى 8 Workers كبداية
+  3. PostgreSQL مُدار أو على VPS منفصل
+  4. Redis مُدار أو على VPS منفصل
+  5. Nginx أمام خدمة الـ webhook
+
+خطوات الرفع التفصيلية على Ubuntu Server مع GitHub:
+  1. أنشئ VPS أو Cloud VM بنظام Ubuntu 24.04 أو 22.04
+  2. افتح المنافذ 80 و443 و22 فقط للعالم الخارجي
+  3. ثبّت Docker و Docker Compose Plugin:
+     $ sudo apt-get update
+     $ sudo apt-get install -y ca-certificates curl gnupg
+     $ sudo install -m 0755 -d /etc/apt/keyrings
+     $ curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+     $ echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+     $ sudo apt-get update
+     $ sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  4. انسخ المشروع من GitHub:
+     $ git clone https://github.com/akr-2009-haig/Karar-bots-downloader.git
+     $ cd Karar-bots-downloader
+  5. جهّز ملف البيئة:
+     $ cp .env.example .env
+     ثم عدّل القيم التالية على الأقل:
+       - TELEGRAM_BOT_TOKEN
+       - BOT_OWNER_ID
+       - DATABASE_URL
+       - REDIS_URL
+       - BOT_MODE=webhook
+       - QUEUE_BACKEND=redis
+       - WEBHOOK_URL=https://your-domain.example.com
+       - WEBHOOK_SECRET_TOKEN=سر_قوي_وعشوائي
+  6. شغّل الخدمات:
+     $ docker compose up -d --build
+  7. زد عدد الـ workers عند الحاجة:
+     $ docker compose up -d --scale worker=4
+  8. تحقق من الصحة:
+     $ curl http://127.0.0.1:8081/healthz
+     $ curl http://127.0.0.1:8081/readyz
+     $ curl http://127.0.0.1:8081/queuez
+  9. اربط Nginx أو Caddy أو Load Balancer أمام المنفذ 8080 مع شهادة TLS
+ 10. اختبر البوت فعلياً من تيليغرام قبل الإعلان العام
+ 11. راقب queue depth وعدد العمال والفشل عبر /queuez والسجلات
+
+مثال Nginx مختصر:
+  server {
+      server_name your-domain.example.com;
+      location /telegram/webhook {
+          proxy_pass http://127.0.0.1:8080;
+          proxy_set_header Host $host;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+      }
+  }
+
+سيرفرات متكاملة مع GitHub لهذا المشروع:
+  1. GitHub Actions + Hetzner / DigitalOcean / Contabo / Linode
+     - الأنسب للإطلاق الكبير
+     - يعطيك تحكماً كاملاً وكلفة أفضل
+  2. Railway
+     - ربط GitHub مباشر وسهل
+     - مناسب للبداية والإطلاق المتوسط
+  3. Render
+     - ربط GitHub سهل جداً
+     - مناسب أكثر حين تريد بساطة الإدارة
+  4. Fly.io
+     - متكامل جيداً مع GitHub وDocker
+     - جيد لتوزيع الـ webhook جغرافياً
+  5. Google Cloud Run / AWS App Runner
+     - يدعمان مسارات CI/CD مرتبطة بـ GitHub
+     - قويان عند الحاجة لتوسع مرن ومدفوع حسب الاستهلاك
+
+كيف تختار؟
+  - إذا أردت أعلى تحكم وأفضل سعر: Hetzner أو Contabo مع GitHub Actions
+  - إذا أردت أسهل بداية: Railway أو Render
+  - إذا أردت Docker + انتشار عالمي: Fly.io
+  - إذا أردت بنية سحابية مؤسسية: Google Cloud Run أو AWS App Runner
+
+خصائص السيرفر المثالي لهذا البوت:
+  • Linux Ubuntu LTS
+  • SSD/NVMe
+  • IP ثابت
+  • دعم Docker
+  • إمكانية إضافة Redis و PostgreSQL منفصلين أو Managed
+  • Bandwidth جيد وثابت
+  • إمكانية نسخ احتياطي دوري
+  • سهولة ربط DNS و TLS
+
 🏆 التوصية النهائية حسب الحجم:
 
 ► بوت صغير (أقل من 10,000 مستخدم):
@@ -335,9 +444,9 @@
   Hetzner VPS CX21 (€8/شهر) + Managed PostgreSQL
   أو Contabo VPS S (€5/شهر) — الأفضل سعراً وأداءً
 
-► بوت ضخم (500,000+ مستخدم):
-  Google Cloud Run + Cloud SQL PostgreSQL
-  (يتوسع تلقائياً بلا حدود)
+► بوت ضخم (500,000+ مستخدم وحتى 2,000,000 مستخدم):
+  GitHub Actions + Hetzner / DigitalOcean / Contabo + Managed PostgreSQL + Managed Redis
+  أو Google Cloud Run + Cloud SQL PostgreSQL + Redis مُدار
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -349,24 +458,26 @@
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-📝 ملاحظات مهمة لـ 300,000+ مستخدم:
+📝 ملاحظات مهمة لـ 2,000,000 مستخدم:
 
 1. قاعدة البيانات:
    - استخدم PostgreSQL (مدعوم في هذا البوت)
    - فعّل connection pooling (مُفعَّل افتراضياً في هذا البوت)
    - أضف indexes (مُضافة تلقائياً عند تشغيل البوت)
 
-2. الأداء:
-   - البوت يستخدم Asyncio و python-telegram-bot المتزامن
-   - الـ TTL Cache يُخفف الضغط على قاعدة البيانات
+  2. الأداء:
+    - استخدم Webhook وليس Polling في الإطلاق الكبير
+    - أبقِ intake خفيفاً ووسع العمال فقط
+    - راقب `/queuez` باستمرار لمعرفة متى تزيد عدد الـ workers
 
 3. النسخ الاحتياطي:
    - اضبط pg_dump مجدولاً يومياً
    - احتفظ بنسخة في Google Drive أو Telegram Channel
 
-4. المراقبة:
-   - استخدم UptimeRobot (مجاني) لمراقبة البوت
-   - أضف /health endpoint إذا أضفت webhook
+  4. المراقبة:
+    - استخدم UptimeRobot أو Better Stack أو Grafana Cloud
+    - راقب `/healthz` و`/readyz` و`/queuez`
+    - إذا زاد `ready_count` باستمرار فهذه إشارة مباشرة لزيادة عدد العمال
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                     تم إعداد هذا الدليل خصيصاً لهذا البوت
