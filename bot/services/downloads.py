@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from telegram import User as TelegramUser
@@ -73,6 +73,8 @@ class DownloadService:
                         ScheduledPost.is_active.is_(True),
                         ScheduledPost.is_sent.is_(False),
                         ScheduledPost.scheduled_at <= now,
+                        # `queued_at < scheduled_at` lets repeating posts become dispatchable again
+                        # after the worker advances `scheduled_at` to the next occurrence.
                         (ScheduledPost.queued_at.is_(None) | (ScheduledPost.queued_at < ScheduledPost.scheduled_at)),
                     )
                     .order_by(ScheduledPost.scheduled_at.asc(), ScheduledPost.id.asc())
@@ -93,6 +95,8 @@ class DownloadService:
                         ScheduledPost.is_active.is_(True),
                         ScheduledPost.is_sent.is_(False),
                         ScheduledPost.scheduled_at <= now,
+                        # Same condition as the candidate scan above; this makes the claim idempotent
+                        # while still allowing repeated posts to be queued again after rescheduling.
                         (ScheduledPost.queued_at.is_(None) | (ScheduledPost.queued_at < ScheduledPost.scheduled_at)),
                     )
                     .update(

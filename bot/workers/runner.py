@@ -35,6 +35,7 @@ from bot.temp import cleanup_path, cleanup_stale_directories
 from bot.utils.platforms import download_media
 
 logger = logging.getLogger(__name__)
+DEFAULT_STATUS_LANGUAGE = "ar"
 
 BASE_RETRY_DELAY_SECONDS = 30
 BACKOFF_MULTIPLIER = 2
@@ -84,9 +85,9 @@ def _download_status_text(lang: str, *, state: str, delay_seconds: int | None = 
             "ru": "⚙️ Ваш запрос обрабатывается. Результат будет отправлен сразу после завершения.",
         },
         "retry": {
-            "ar": f"🔁 حدث تأخير مؤقت أثناء المعالجة. سنعيد المحاولة خلال {delay_seconds or 30} ثانية.",
-            "en": f"🔁 Processing hit a temporary issue. We will retry in about {delay_seconds or 30} seconds.",
-            "ru": f"🔁 Во время обработки возникла временная проблема. Повторим попытку примерно через {delay_seconds or 30} сек.",
+            "ar": "🔁 حدث تأخير مؤقت أثناء المعالجة. سنعيد المحاولة خلال {delay_seconds} ثانية.",
+            "en": "🔁 Processing hit a temporary issue. We will retry in about {delay_seconds} seconds.",
+            "ru": "🔁 Во время обработки возникла временная проблема. Повторим попытку примерно через {delay_seconds} сек.",
         },
         "failed": {
             "ar": "❌ تعذر إكمال الطلب بعد عدة محاولات. يمكنك إعادة إرسال الرابط للمحاولة مجدداً.",
@@ -95,7 +96,9 @@ def _download_status_text(lang: str, *, state: str, delay_seconds: int | None = 
         },
     }
     localized_defaults = defaults.get(state, defaults["failed"])
-    default_text = localized_defaults.get(lang, localized_defaults["ar"])
+    default_text = localized_defaults.get(lang, localized_defaults[DEFAULT_STATUS_LANGUAGE])
+    if state == "retry":
+        default_text = default_text.format(delay_seconds=delay_seconds or 30)
     return get_setting(f"download_{state}_message_{lang}", get_setting(f"download_{state}_message", default_text))
 
 
@@ -150,6 +153,8 @@ def _next_scheduled_at(value: datetime, repeat_type: str | None) -> datetime | N
     if repeat == "weekly":
         return value + timedelta(days=7)
     if repeat in {"monthly", "forever"}:
+        # The legacy admin UI exposes `forever` without a separate cadence field.
+        # Until that is expanded, treat it as an open-ended monthly recurrence.
         return _next_month(value)
     return None
 
