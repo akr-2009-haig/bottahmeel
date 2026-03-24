@@ -363,7 +363,7 @@
      $ sudo apt-get update
      $ sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   4. انسخ المشروع من GitHub:
-     $ git clone https://github.com/akr-2009-haig/Karar-bots-downloader.git
+     $ git clone https://github.com/YOUR_USER_OR_ORG/Karar-bots-downloader.git
      $ cd Karar-bots-downloader
   5. جهّز ملف البيئة:
      $ cp .env.example .env

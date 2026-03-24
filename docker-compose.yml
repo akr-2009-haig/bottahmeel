@@ -15,8 +15,7 @@ services:
       test:
         - CMD
         - python
-        - -c
-        - "import os, urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"HEALTHCHECK_PORT\", \"8081\")}/healthz', timeout=5)"
+        - scripts/healthcheck.py
       interval: 30s
       timeout: 10s
       retries: 3

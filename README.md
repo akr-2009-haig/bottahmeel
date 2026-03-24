@@ -155,7 +155,7 @@ This is the simplest serious production path if you want to deploy from GitHub o
    ```
 4. Clone the repository and prepare env vars:
    ```bash
-   git clone https://github.com/akr-2009-haig/Karar-bots-downloader.git
+   git clone https://github.com/<your-user-or-org>/Karar-bots-downloader.git
    cd Karar-bots-downloader
    cp .env.example .env
    ```
