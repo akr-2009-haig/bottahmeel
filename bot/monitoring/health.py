@@ -41,9 +41,22 @@ def _worker_snapshot() -> dict:
             for worker in workers
             if worker.last_seen and worker.last_seen >= cutoff and worker.status != "stopped"
         ]
+        stale_workers = [
+            {
+                "worker_name": worker.worker_name,
+                "status": worker.status,
+                "active_task_id": worker.active_task_id,
+                "last_seen": worker.last_seen.isoformat() if worker.last_seen else None,
+            }
+            for worker in workers
+            if worker.status != "stopped" and (not worker.last_seen or worker.last_seen < cutoff)
+        ]
         return {
             "active_count": len(active_workers),
+            "stale_count": len(stale_workers),
             "active": active_workers,
+            "stale": stale_workers,
+            "heartbeat_ttl_seconds": settings.worker_heartbeat_ttl_seconds,
         }
     finally:
         db.close()
@@ -52,14 +65,21 @@ def _worker_snapshot() -> dict:
 def _readiness_payload() -> tuple[dict, int]:
     if database_db.engine is None:
         return {"status": "starting"}, 503
+    workers = _worker_snapshot()
+    worker_component_status = "ready"
+    if workers["active_count"] == 0:
+        worker_component_status = "warning"
+    elif workers["stale_count"] > 0:
+        worker_component_status = "warning"
     payload = {
         "status": "ready",
         "components": {
             "database": "ready",
             "broker": "ready" if ping_broker() else "error",
+            "workers": worker_component_status,
         },
         "queue": get_queue_stats(),
-        "workers": _worker_snapshot(),
+        "workers": workers,
     }
     if payload["components"]["broker"] != "ready":
         payload["status"] = "error"

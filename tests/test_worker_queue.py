@@ -1,12 +1,13 @@
 import os
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import bot.database.db as db_module
 from bot.config.settings import load_settings
-from bot.database import BackgroundJob, BroadcastLog, Download, User, UserStatus, init_db
-from bot.queue import claim_job_for_processing, claim_next_job, complete_job
+from bot.database import BackgroundJob, BroadcastLog, Download, JobStatus, User, UserStatus, init_db
+from bot.queue import claim_job_for_processing, claim_next_job, complete_job, get_queue_stats, recover_stale_processing_jobs
 from bot.services import DownloadService
 from bot.workers.runner import _process_broadcast, _process_job
 
@@ -179,3 +180,105 @@ class WorkerQueueTests(unittest.IsolatedAsyncioTestCase):
 
         other_job = claim_job_for_processing(job_id, "celery@test", task_id="task-2")
         self.assertIsNone(other_job)
+
+    async def test_queue_stats_reports_ready_retry_and_stale_processing_counts(self):
+        now = datetime.now(timezone.utc)
+        db = self._session()
+        try:
+            db.add_all([
+                BackgroundJob(
+                    job_type="download",
+                    status=JobStatus.PENDING,
+                    payload={"url": "https://example.com/1"},
+                    available_at=now - timedelta(minutes=5),
+                    created_at=now - timedelta(minutes=5),
+                ),
+                BackgroundJob(
+                    job_type="download",
+                    status=JobStatus.RETRY,
+                    payload={"url": "https://example.com/2"},
+                    available_at=now + timedelta(minutes=2),
+                    created_at=now - timedelta(minutes=3),
+                    attempts=1,
+                    max_attempts=3,
+                ),
+                BackgroundJob(
+                    job_type="download",
+                    status=JobStatus.PROCESSING,
+                    payload={"url": "https://example.com/3"},
+                    locked_at=now - timedelta(hours=2),
+                    created_at=now - timedelta(hours=2),
+                    available_at=now - timedelta(hours=2),
+                    attempts=1,
+                    max_attempts=3,
+                    worker_name="stalled-worker",
+                ),
+            ])
+            db.commit()
+        finally:
+            db.close()
+
+        stats = get_queue_stats()
+
+        self.assertEqual(stats["counts"]["pending"], 1)
+        self.assertEqual(stats["counts"]["retry"], 1)
+        self.assertEqual(stats["counts"]["processing"], 1)
+        self.assertEqual(stats["ready_count"], 1)
+        self.assertEqual(stats["delayed_retry_count"], 1)
+        self.assertEqual(stats["stale_processing_count"], 1)
+        self.assertGreaterEqual(stats["oldest_pending_age_seconds"], 180)
+        self.assertGreaterEqual(stats["oldest_processing_lock_age_seconds"], 3600)
+
+    async def test_recover_stale_processing_jobs_retries_or_fails_expired_jobs(self):
+        now = datetime.now(timezone.utc)
+        db = self._session()
+        try:
+            retry_job_row = BackgroundJob(
+                job_type="download",
+                status=JobStatus.PROCESSING,
+                payload={"url": "https://example.com/retry"},
+                available_at=now - timedelta(minutes=10),
+                created_at=now - timedelta(minutes=10),
+                locked_at=now - timedelta(hours=2),
+                attempts=1,
+                max_attempts=3,
+                worker_name="retry-worker",
+                celery_task_id="task-retry",
+            )
+            failed_job_row = BackgroundJob(
+                job_type="download",
+                status=JobStatus.PROCESSING,
+                payload={"url": "https://example.com/fail"},
+                available_at=now - timedelta(minutes=20),
+                created_at=now - timedelta(minutes=20),
+                locked_at=now - timedelta(hours=2),
+                attempts=3,
+                max_attempts=3,
+                worker_name="failed-worker",
+                celery_task_id="task-fail",
+            )
+            db.add_all([retry_job_row, failed_job_row])
+            db.commit()
+            retry_job_id = retry_job_row.id
+            failed_job_id = failed_job_row.id
+        finally:
+            db.close()
+
+        recovered = recover_stale_processing_jobs(lock_timeout_seconds=60)
+        self.assertEqual(recovered, {"total": 2, "retried": 1, "failed": 1})
+
+        db = self._session()
+        try:
+            retried_job = db.query(BackgroundJob).filter_by(id=retry_job_id).first()
+            failed_job = db.query(BackgroundJob).filter_by(id=failed_job_id).first()
+            self.assertEqual(retried_job.status, JobStatus.RETRY)
+            self.assertIsNone(retried_job.locked_at)
+            self.assertIsNone(retried_job.worker_name)
+            self.assertIsNone(retried_job.celery_task_id)
+            self.assertIn("Processing lock expired", retried_job.error_message)
+            self.assertEqual(failed_job.status, JobStatus.FAILED)
+            self.assertIsNone(failed_job.locked_at)
+            self.assertIsNotNone(failed_job.completed_at)
+            self.assertIn("Processing lock expired", failed_job.error_message)
+        finally:
+            db.close()
