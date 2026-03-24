@@ -12,6 +12,7 @@ from bot.database import (
     ChannelGroup, ScheduledPost, BroadcastLog, SavedAd, AntiFloodSettings,
     UserStatus, AdminPermission, get_setting, set_setting, AdminActivityLog
 )
+from bot.services import DownloadService
 from .keyboards import (
     admin_main_keyboard, users_menu_keyboard, admins_menu_keyboard,
     subscription_menu_keyboard, publish_menu_keyboard, broadcast_menu_keyboard,
@@ -1929,34 +1930,30 @@ async def _do_broadcast(query, context, db, target: str):
         await query.answer("❌ لا توجد رسالة", show_alert=True)
         return
 
-    sent = 0
-    failed = 0
-
-    if target == "users":
-        users = db.query(User).filter_by(status=UserStatus.ACTIVE).all()
-        for u in users:
-            try:
-                await context.bot.send_message(chat_id=u.telegram_id, text=bc_text)
-                sent += 1
-            except Exception:
-                failed += 1
-
     log = BroadcastLog(
         text=bc_text,
         target_type=target,
-        total_sent=sent,
-        total_failed=failed,
+        total_sent=0,
+        total_failed=0,
         sent_by=query.from_user.id,
-        finished_at=datetime.now(timezone.utc)
     )
     db.add(log)
     db.commit()
+    db.refresh(log)
+
+    job_id = DownloadService.enqueue_broadcast(
+        text=bc_text,
+        target=target,
+        broadcast_log_id=log.id,
+        offset=0,
+    )
 
     context.user_data["bc_text"] = ""
     await query.edit_message_text(
-        f"✅ **تم الإرسال بنجاح**\n\n"
-        f"📨 المرسلة: {sent}\n"
-        f"⚠️ الفاشلة: {failed}",
+        f"✅ **تمت جدولة الإذاعة**\n\n"
+        f"🆔 المهمة: `{job_id}`\n"
+        f"📣 النوع: {target}\n"
+        f"⏳ ستتم المعالجة في الخلفية بواسطة العامل.",
         reply_markup=back_keyboard("adm_broadcast"),
         parse_mode="Markdown"
     )

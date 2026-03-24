@@ -29,6 +29,14 @@ class AdminPermission(str, enum.Enum):
     DELETE_ADMINS = "delete_admins"
 
 
+class JobStatus(str, enum.Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    RETRY = "retry"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -63,6 +71,26 @@ class Download(Base):
     success = Column(Boolean, default=True)
 
     user = relationship("User", back_populates="downloads")
+
+
+class BackgroundJob(Base):
+    __tablename__ = "background_jobs"
+
+    id = Column(Integer, primary_key=True)
+    job_type = Column(String(50), nullable=False, index=True)
+    status = Column(SAEnum(JobStatus), default=JobStatus.PENDING, nullable=False, index=True)
+    payload = Column(JSON, nullable=False, default=dict)
+    result = Column(JSON, nullable=True)
+    error_message = Column(Text, nullable=True)
+    attempts = Column(Integer, default=0, nullable=False)
+    max_attempts = Column(Integer, default=3, nullable=False)
+    priority = Column(Integer, default=0, nullable=False)
+    worker_name = Column(String(100), nullable=True)
+    available_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    locked_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
 class SubscriptionChannel(Base):
@@ -238,10 +266,10 @@ class BotLanguage(Base):
     __tablename__ = "bot_languages"
 
     id = Column(Integer, primary_key=True)
-    code = Column(String(10), unique=True, nullable=False)   # e.g. "ar"
-    name = Column(String(100), nullable=False)               # e.g. "العربية"
-    flag = Column(String(10), nullable=False)                # e.g. "🇸🇦"
+    code = Column(String(10), unique=True, nullable=False)
+    name = Column(String(100), nullable=False)
+    flag = Column(String(10), nullable=False)
     is_enabled = Column(Boolean, default=False)
-    is_builtin = Column(Boolean, default=False)              # ar/en/ru are builtin
+    is_builtin = Column(Boolean, default=False)
     position = Column(Integer, default=0)
     added_at = Column(DateTime(timezone=True), server_default=func.now())

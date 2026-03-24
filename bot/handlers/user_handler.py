@@ -1,32 +1,24 @@
 import logging
 import os
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
-from telegram import CallbackQuery
-from telegram.ext import ContextTypes
-from telegram.constants import ChatAction
 
-from bot.database import (
-    SessionLocal, User, SubscriptionChannel, Download,
-    UserStatus, BotLanguage, get_setting
-)
+from telegram import CallbackQuery
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, Update
+from telegram.ext import ContextTypes
+
+from bot.database import SessionLocal, SubscriptionChannel, User, UserStatus, BotLanguage, get_setting
 from bot.locales import get_string
-from bot.utils.helpers import cleanup_file, get_user_name
-from bot.utils.platforms import detect_platform, download_media, is_any_url, get_platform_info
+from bot.services import DownloadService
 from bot.utils.button_engine import (
-    get_buttons_for_location, build_reply_markup, get_reply_button_response
+    build_reply_markup,
+    get_buttons_for_location,
+    get_reply_button_response,
 )
+from bot.utils.helpers import get_user_name
+from bot.utils.platforms import detect_platform, get_platform_info, is_any_url
 
 logger = logging.getLogger(__name__)
 
 BOT_OWNER_ID = int(os.environ.get("BOT_OWNER_ID", "0"))
-
-ACTIVITY_MAP = {
-    "upload_video": ChatAction.UPLOAD_VIDEO,
-    "upload_photo": ChatAction.UPLOAD_PHOTO,
-    "upload_document": ChatAction.UPLOAD_DOCUMENT,
-    "typing": ChatAction.TYPING,
-    "record_voice": ChatAction.RECORD_VOICE,
-}
 
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
@@ -92,8 +84,7 @@ def build_lang_keyboard(current_lang: str = "ar"):
 async def _send_message(target, text: str, main_markup, extra_markup, context=None):
     """
     Unified sender: sends main message with main_markup.
-    If extra_markup (reply keyboard) needs a separate message, sends it silently
-    — no ⌨️ placeholder when only one type exists.
+    If extra_markup (reply keyboard) needs a separate message, sends it silently.
     """
     if isinstance(target, CallbackQuery):
         chat_id = target.message.chat_id
@@ -160,8 +151,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 keyboard.append([InlineKeyboardButton(f"📢 {title}", url=link)])
             keyboard.append([InlineKeyboardButton(get_string("check_subscription", lang), callback_data="check_sub")])
 
-            sub_msg = get_lang_setting("subscription_message", lang,
-                                       get_string("subscribe_required", lang))
+            sub_msg = get_lang_setting("subscription_message", lang, get_string("subscribe_required", lang))
             welcome = get_string("welcome", lang, name=get_user_name(user))
             await update.message.reply_text(
                 f"{welcome}\n\n{sub_msg}",
@@ -176,8 +166,6 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def _show_welcome(update, context, db_user, name: str, lang: str):
     bot_name = get_setting("bot_name", "SaveEliteBot")
-
-    # Language-aware start message: tries start_message_{lang} first
     default_start = (
         get_string("welcome", lang, name=name) + "\n\n"
         + get_string("send_link", lang) + "\n\n"
@@ -204,16 +192,16 @@ async def _show_welcome(update, context, db_user, name: str, lang: str):
         inline_rows, reply_btns, fallback_inline=fallback
     )
 
-    msg = update.message if not isinstance(update, CallbackQuery) else None
-    if msg:
-        await msg.reply_text(start_msg, reply_markup=main_markup)
+    if not isinstance(update, CallbackQuery):
+        await update.message.reply_text(start_msg, reply_markup=main_markup)
         if extra_markup:
-            await msg.reply_text("⌨️", reply_markup=extra_markup)
-    else:
-        chat_id = update.message.chat_id
-        await context.bot.send_message(chat_id, start_msg, reply_markup=main_markup)
-        if extra_markup:
-            await context.bot.send_message(chat_id, "⌨️", reply_markup=extra_markup)
+            await update.message.reply_text("⌨️", reply_markup=extra_markup)
+        return
+
+    chat_id = update.message.chat_id
+    await context.bot.send_message(chat_id, start_msg, reply_markup=main_markup)
+    if extra_markup:
+        await context.bot.send_message(chat_id, "⌨️", reply_markup=extra_markup)
 
 
 # ─── /help ────────────────────────────────────────────────────────────────────
@@ -226,7 +214,6 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lang = db_user.language_code if db_user else "ar"
         bot_name = get_setting("bot_name", "SaveEliteBot")
 
-        # Language-aware help message
         help_msg = get_lang_setting(
             "help_message", lang,
             get_string("help_text", lang, bot_name=bot_name)
@@ -312,11 +299,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             db_user.language_code = new_lang
             db.commit()
 
-            # Show confirmation in the new language
             confirm_text = get_string("lang_changed", new_lang)
             await query.answer(confirm_text, show_alert=True)
 
-            # Refresh the language picker with new selection highlighted
             try:
                 await query.edit_message_text(
                     text=get_string("lang_select", new_lang),
@@ -351,7 +336,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lang = db_user.language_code or "ar"
         bot_name = get_setting("bot_name", "SaveEliteBot")
 
-        # ── Priority 1: Reply keyboard button response ───────────────────────
         reply_response = get_reply_button_response(text)
         if reply_response:
             formatted = (
@@ -363,7 +347,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(formatted)
             return
 
-        # ── Priority 2: Subscription gate ───────────────────────────────────
         sub_enabled = get_setting("subscription_enabled", "true") == "true"
         if sub_enabled:
             is_subscribed, unsubscribed = await check_subscriptions(user.id, context.bot)
@@ -375,13 +358,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     keyboard.append([InlineKeyboardButton(f"📢 {title}", url=link)])
                 keyboard.append([InlineKeyboardButton(get_string("check_subscription", lang), callback_data="check_sub")])
                 await update.message.reply_text(
-                    get_lang_setting("subscription_message", lang,
-                                    get_string("subscribe_required", lang)),
+                    get_lang_setting("subscription_message", lang, get_string("subscribe_required", lang)),
                     reply_markup=InlineKeyboardMarkup(keyboard)
                 )
                 return
 
-        # ── Priority 3: URL / platform download ─────────────────────────────
         if not is_any_url(text):
             return
 
@@ -390,109 +371,39 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not detected_url or not platform:
             unsup_msg = get_lang_setting(
                 "unsupported_platform_msg", lang,
-                get_lang_setting("unsupported_message", lang,
-                                 get_string("unsupported", lang))
+                get_lang_setting("unsupported_message", lang, get_string("unsupported", lang))
             )
             await update.message.reply_text(unsup_msg)
             return
 
         platform_info = get_platform_info(platform)
         platform_name = platform_info.get("name", platform.title())
-        platform_emoji = platform_info.get("emoji", "📥")
         enabled_key = platform_info.get("db_key", f"{platform}_enabled")
 
         if get_setting(enabled_key, "true") != "true":
             disabled_msg = get_lang_setting(
                 f"{platform}_disabled_msg", lang,
-                get_setting("disabled_platform_generic_msg",
-                            f"عذراً، {platform_name} غير مفعل حالياً في البوت.")
+                get_setting("disabled_platform_generic_msg", f"عذراً، {platform_name} غير مفعل حالياً في البوت.")
             )
             await update.message.reply_text(disabled_msg)
             return
 
         wait_msg = await update.message.reply_text(
-            get_lang_setting("downloading_message", lang,
-                             get_string("downloading", lang))
+            get_lang_setting("downloading_message", lang, get_string("downloading", lang))
         )
-
-        activity = get_setting("activity_status", "upload_video")
-        await context.bot.send_chat_action(
-            update.effective_chat.id,
-            ACTIVITY_MAP.get(activity, ChatAction.UPLOAD_VIDEO)
-        )
-
-        filepath, media_type, title = await download_media(detected_url, platform)
-
-        if not filepath:
-            err = get_lang_setting("error_message", lang, get_string("error", lang))
-            await wait_msg.edit_text(err)
-            db.add(Download(
-                user_id=db_user.id, platform=platform,
-                url=detected_url, media_type="video", success=False
-            ))
-            db.commit()
-            return
-
-        # Caption: language-aware
-        if media_type == "photo":
-            cap_key = "photo_caption"
-        elif media_type == "audio":
-            cap_key = "audio_caption"
-        else:
-            cap_key = "video_caption"
-
-        cap_template = get_lang_setting(
-            cap_key, lang,
-            get_setting(cap_key,
-                        get_string("success_caption", lang, bot_name=bot_name))
-        )
-        caption = (
-            cap_template
-            .replace("{bot_name}", bot_name)
-            .replace("{name}", get_user_name(user))
-            .replace("{platform}", platform_name)
-            .replace("{platform_emoji}", platform_emoji)
-        )
-
-        # Download-location buttons
-        dl_inline_rows, dl_reply_btns = get_buttons_for_location("download")
-        dl_main_markup, dl_extra_markup = build_reply_markup(dl_inline_rows, dl_reply_btns)
 
         try:
-            await wait_msg.delete()
-        except Exception:
-            pass
-
-        try:
-            with open(filepath, "rb") as f:
-                if media_type == "photo":
-                    await update.message.reply_photo(photo=f, caption=caption,
-                                                     reply_markup=dl_main_markup)
-                elif media_type == "audio":
-                    await update.message.reply_audio(audio=f, caption=caption,
-                                                     reply_markup=dl_main_markup)
-                else:
-                    await update.message.reply_video(video=f, caption=caption,
-                                                     supports_streaming=True,
-                                                     reply_markup=dl_main_markup)
-
-            if dl_extra_markup:
-                await update.message.reply_text("⌨️", reply_markup=dl_extra_markup)
-
-            db_user.download_count += 1
-            db.add(Download(
-                user_id=db_user.id, platform=platform,
-                url=detected_url, media_type=media_type, success=True
-            ))
-            db.commit()
-
-        except Exception as e:
-            logger.error(f"Error sending media [{platform}]: {e}")
-            await update.message.reply_text(
-                get_lang_setting("error_message", lang, get_string("error", lang))
+            job_id = DownloadService.enqueue_download(
+                user_id=db_user.id,
+                chat_id=update.effective_chat.id,
+                url=detected_url,
+                platform=platform,
+                lang=lang,
+                status_message_id=wait_msg.message_id,
             )
-        finally:
-            cleanup_file(filepath)
-
+            logger.info("Queued download job %s for user=%s platform=%s", job_id, db_user.id, platform)
+        except Exception as exc:
+            logger.exception("Failed to enqueue download job: %s", exc)
+            await wait_msg.edit_text(get_lang_setting("error_message", lang, get_string("error", lang)))
     finally:
         db.close()

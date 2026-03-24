@@ -1,15 +1,18 @@
 import os
 import time
 import threading
-from sqlalchemy import create_engine, text, Index
+from contextlib import contextmanager
+
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import QueuePool as QueuedPool
-from .models import Base, BotSettings, AntiFloodSettings, AdminUser, BotLanguage, User, SubscriptionChannel
+
+from .models import Base, BotSettings, AntiFloodSettings, BotLanguage
 import logging
 
 logger = logging.getLogger(__name__)
 
-engine = None  # Initialized lazily by _create_engine() inside init_db()
+engine = None
 _engine_lock = threading.Lock()
 
 
@@ -35,15 +38,11 @@ SessionLocal = _SessionProxy()
 
 
 def _create_engine():
-    """Create the SQLAlchemy engine and session factory from DATABASE_URL.
-
-    Idempotent and thread-safe: subsequent calls are no-ops once initialized.
-    """
     global engine
     if engine is not None:
         return
     with _engine_lock:
-        if engine is not None:  # double-checked locking
+        if engine is not None:
             return
         db_url = os.environ.get("DATABASE_URL", "").strip()
         if not db_url:
@@ -64,11 +63,10 @@ def _create_engine():
         )
         SessionLocal._setup(sessionmaker(autocommit=False, autoflush=False, bind=engine))
 
-# ── TTL Cache للإعدادات المتكررة ─────────────────────────────────────────────
-# يتيح للبوت تحمّل 300,000+ مستخدم دون ضغط مستمر على قاعدة البيانات
+
 _settings_cache: dict[str, tuple[str, float]] = {}
 _cache_lock = threading.Lock()
-_CACHE_TTL = 30.0  # ثانية
+_CACHE_TTL = 30.0
 
 
 def _cache_get(key: str):
@@ -90,57 +88,56 @@ def _cache_invalidate(key: str):
 
 
 WORLD_LANGUAGES = [
-    # code,  name (native),        flag,  builtin
-    ("ar",  "العربية",             "🇸🇦",  True),
-    ("en",  "English",             "🇬🇧",  True),
-    ("ru",  "Русский",             "🇷🇺",  True),
-    ("fr",  "Français",            "🇫🇷",  False),
-    ("de",  "Deutsch",             "🇩🇪",  False),
-    ("es",  "Español",             "🇪🇸",  False),
-    ("pt",  "Português",           "🇵🇹",  False),
-    ("it",  "Italiano",            "🇮🇹",  False),
-    ("nl",  "Nederlands",          "🇳🇱",  False),
-    ("pl",  "Polski",              "🇵🇱",  False),
-    ("tr",  "Türkçe",              "🇹🇷",  False),
-    ("id",  "Indonesia",           "🇮🇩",  False),
-    ("ms",  "Melayu",              "🇲🇾",  False),
-    ("th",  "ภาษาไทย",             "🇹🇭",  False),
-    ("vi",  "Tiếng Việt",          "🇻🇳",  False),
-    ("zh",  "中文",                 "🇨🇳",  False),
-    ("ja",  "日本語",               "🇯🇵",  False),
-    ("ko",  "한국어",               "🇰🇷",  False),
-    ("hi",  "हिन्दी",              "🇮🇳",  False),
-    ("bn",  "বাংলা",               "🇧🇩",  False),
-    ("ur",  "اردو",                "🇵🇰",  False),
-    ("fa",  "فارسی",               "🇮🇷",  False),
-    ("he",  "עברית",               "🇮🇱",  False),
-    ("uk",  "Українська",          "🇺🇦",  False),
-    ("cs",  "Čeština",             "🇨🇿",  False),
-    ("sk",  "Slovenčina",          "🇸🇰",  False),
-    ("ro",  "Română",              "🇷🇴",  False),
-    ("hu",  "Magyar",              "🇭🇺",  False),
-    ("sv",  "Svenska",             "🇸🇪",  False),
-    ("no",  "Norsk",               "🇳🇴",  False),
-    ("da",  "Dansk",               "🇩🇰",  False),
-    ("fi",  "Suomi",               "🇫🇮",  False),
-    ("el",  "Ελληνικά",            "🇬🇷",  False),
-    ("bg",  "Български",           "🇧🇬",  False),
-    ("hr",  "Hrvatski",            "🇭🇷",  False),
-    ("sr",  "Српски",              "🇷🇸",  False),
-    ("lt",  "Lietuvių",            "🇱🇹",  False),
-    ("lv",  "Latviešu",            "🇱🇻",  False),
-    ("et",  "Eesti",               "🇪🇪",  False),
-    ("az",  "Azərbaycan",          "🇦🇿",  False),
-    ("ka",  "ქართული",             "🇬🇪",  False),
-    ("am",  "አማርኛ",               "🇪🇹",  False),
-    ("sw",  "Kiswahili",           "🇹🇿",  False),
-    ("af",  "Afrikaans",           "🇿🇦",  False),
-    ("kk",  "Қазақша",             "🇰🇿",  False),
-    ("uz",  "O'zbek",              "🇺🇿",  False),
-    ("ky",  "Кыргызча",            "🇰🇬",  False),
-    ("tg",  "Тоҷикӣ",              "🇹🇯",  False),
-    ("mn",  "Монгол",              "🇲🇳",  False),
-    ("my",  "မြန်မာ",              "🇲🇲",  False),
+    ("ar", "العربية", "🇸🇦", True),
+    ("en", "English", "🇬🇧", True),
+    ("ru", "Русский", "🇷🇺", True),
+    ("fr", "Français", "🇫🇷", False),
+    ("de", "Deutsch", "🇩🇪", False),
+    ("es", "Español", "🇪🇸", False),
+    ("pt", "Português", "🇵🇹", False),
+    ("it", "Italiano", "🇮🇹", False),
+    ("nl", "Nederlands", "🇳🇱", False),
+    ("pl", "Polski", "🇵🇱", False),
+    ("tr", "Türkçe", "🇹🇷", False),
+    ("id", "Indonesia", "🇮🇩", False),
+    ("ms", "Melayu", "🇲🇾", False),
+    ("th", "ภาษาไทย", "🇹🇭", False),
+    ("vi", "Tiếng Việt", "🇻🇳", False),
+    ("zh", "中文", "🇨🇳", False),
+    ("ja", "日本語", "🇯🇵", False),
+    ("ko", "한국어", "🇰🇷", False),
+    ("hi", "हिन्दी", "🇮🇳", False),
+    ("bn", "বাংলা", "🇧🇩", False),
+    ("ur", "اردو", "🇵🇰", False),
+    ("fa", "فارسی", "🇮🇷", False),
+    ("he", "עברית", "🇮🇱", False),
+    ("uk", "Українська", "🇺🇦", False),
+    ("cs", "Čeština", "🇨🇿", False),
+    ("sk", "Slovenčina", "🇸🇰", False),
+    ("ro", "Română", "🇷🇴", False),
+    ("hu", "Magyar", "🇭🇺", False),
+    ("sv", "Svenska", "🇸🇪", False),
+    ("no", "Norsk", "🇳🇴", False),
+    ("da", "Dansk", "🇩🇰", False),
+    ("fi", "Suomi", "🇫🇮", False),
+    ("el", "Ελληνικά", "🇬🇷", False),
+    ("bg", "Български", "🇧🇬", False),
+    ("hr", "Hrvatski", "🇭🇷", False),
+    ("sr", "Српски", "🇷🇸", False),
+    ("lt", "Lietuvių", "🇱🇹", False),
+    ("lv", "Latviešu", "🇱🇻", False),
+    ("et", "Eesti", "🇪🇪", False),
+    ("az", "Azərbaycan", "🇦🇿", False),
+    ("ka", "ქართული", "🇬🇪", False),
+    ("am", "አማርኛ", "🇪🇹", False),
+    ("sw", "Kiswahili", "🇹🇿", False),
+    ("af", "Afrikaans", "🇿🇦", False),
+    ("kk", "Қазақша", "��🇿", False),
+    ("uz", "O'zbek", "🇺🇿", False),
+    ("ky", "Кыргызча", "🇰🇬", False),
+    ("tg", "Тоҷикӣ", "🇹🇯", False),
+    ("mn", "Монгол", "🇲🇳", False),
+    ("my", "မြန်မာ", "🇲🇲", False),
 ]
 
 
@@ -155,7 +152,6 @@ def init_db():
 
 
 def _run_migrations():
-    """Run incremental DB migrations safely."""
     stmts = [
         "ALTER TABLE webapp_buttons ADD COLUMN IF NOT EXISTS placement VARCHAR(30) NOT NULL DEFAULT 'inline'",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS download_count INTEGER DEFAULT 0",
@@ -174,11 +170,9 @@ def _run_migrations():
 
 
 def _create_indexes():
-    """إنشاء فهارس قاعدة البيانات لتسريع الاستعلامات مع 300k+ مستخدم."""
     index_cmds = [
         "CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id)",
-        "CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active)",
-        "CREATE INDEX IF NOT EXISTS idx_users_is_banned ON users(is_banned)",
+        "CREATE INDEX IF NOT EXISTS idx_users_status ON users(status)",
         "CREATE INDEX IF NOT EXISTS idx_users_joined_at ON users(joined_at)",
         "CREATE INDEX IF NOT EXISTS idx_sub_channels_is_backup ON subscription_channels(is_backup)",
         "CREATE INDEX IF NOT EXISTS idx_sub_channels_is_active ON subscription_channels(is_active)",
@@ -186,6 +180,7 @@ def _create_indexes():
         "CREATE INDEX IF NOT EXISTS idx_bot_settings_key ON bot_settings(key)",
         "CREATE INDEX IF NOT EXISTS idx_admin_users_telegram_id ON admin_users(telegram_id)",
         "CREATE INDEX IF NOT EXISTS idx_admin_users_is_active ON admin_users(is_active)",
+        "CREATE INDEX IF NOT EXISTS idx_background_jobs_status_available ON background_jobs(status, available_at)",
     ]
     try:
         with engine.connect() as conn:
@@ -200,13 +195,21 @@ def _create_indexes():
         logger.warning(f"Index creation warning: {e}")
 
 
-def get_db() -> Session:
+@contextmanager
+def session_scope() -> Session:
     db = SessionLocal()
     try:
-        return db
-    except Exception as e:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
         db.close()
-        raise e
+
+
+def get_db() -> Session:
+    return SessionLocal()
 
 
 def _seed_defaults():
@@ -218,11 +221,12 @@ def _seed_defaults():
             ("start_message", "مرحبا بك يا {name} 👋\n\nيمكنني تنزيل الوسائط من TikTok.\nأرسل رابط الفيديو للبدء."),
             ("subscription_message", "لإستخدام البوت يرجى الإشتراك في القنوات التالية\n📢 اشترك في القنوات التالية"),
             ("help_message", "🤖 يمكنني تنزيل مقاطع فيديو من TikTok\n\nكيفية التنزيل:\n1. انتقل إلى تطبيق TikTok\n2. اختر مقطع فيديو\n3. انقر على زر ↪️ أو ثلاث نقاط\n4. انقر فوق نسخ الرابط\n5. أرسل الرابط هنا"),
-            ("downloading_message", "⏰┇يرجى الانتظار، يتم قياس حجم التحميل..."),
+            ("downloading_message", "⏰┇تم استلام طلبك وسيتم معالجته الآن..."),
             ("unsupported_message", "⚠️ الرابط غير مدعوم. يرجى إرسال رابط TikTok صحيح."),
             ("error_message", "❌ حدث خطأ أثناء التحميل. يرجى المحاولة مجدداً."),
             ("video_caption", "📥 تم التحميل بنجاح\n\n🤖 @{bot_name}"),
             ("photo_caption", "🖼 تم التحميل بنجاح\n\n🤖 @{bot_name}"),
+            ("audio_caption", "🎵 تم التحميل بنجاح\n\n🤖 @{bot_name}"),
             ("activity_status", "upload_video"),
             ("tiktok_enabled", "true"),
             ("youtube_enabled", "true"),
@@ -268,7 +272,6 @@ def _seed_defaults():
 
 
 def _seed_languages():
-    """Seed the 50 world languages — builtin 3 enabled by default."""
     db = SessionLocal()
     try:
         for i, (code, name, flag, builtin) in enumerate(WORLD_LANGUAGES):
