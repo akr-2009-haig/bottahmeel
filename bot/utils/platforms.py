@@ -14,6 +14,10 @@ from bot.temp import create_temp_download_dir
 
 logger = logging.getLogger(__name__)
 
+IMAGE_EXTS = {"jpg", "jpeg", "png", "webp", "gif"}
+AUDIO_EXTS = {"mp3", "m4a", "ogg", "wav", "flac", "opus"}
+VIDEO_EXTS = {"mp4", "m4v", "mov", "mkv", "webm", "avi", "flv", "3gp", "mpeg", "mpg"}
+
 PLATFORMS = {
     "tiktok": {
         "name": "TikTok",
@@ -122,6 +126,29 @@ PLATFORMS = {
         "db_key": "reddit_enabled",
         "default_enabled": False,
     },
+    "google_drive": {
+        "name": "Google Drive",
+        "emoji": "📁",
+        "patterns": [
+            r'https?://drive\.google\.com/file/d/\S+',
+            r'https?://drive\.google\.com/open\?id=\S+',
+            r'https?://drive\.google\.com/uc\?id=\S+',
+        ],
+        "db_key": "google_drive_enabled",
+        "default_enabled": False,
+    },
+    "linkedin": {
+        "name": "LinkedIn",
+        "emoji": "💼",
+        "patterns": [
+            r'https?://(www\.)?linkedin\.com/posts/\S+',
+            r'https?://(www\.)?linkedin\.com/feed/update/\S+',
+            r'https?://(www\.)?linkedin\.com/embed/feed/update/\S+',
+            r'https?://lnkd\.in/\S+',
+        ],
+        "db_key": "linkedin_enabled",
+        "default_enabled": False,
+    },
     "vimeo": {
         "name": "Vimeo",
         "emoji": "🎬",
@@ -196,6 +223,12 @@ PLATFORM_OPTS: dict = {
     "reddit": {
         'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
     },
+    "google_drive": {
+        'format': 'best/bestvideo+bestaudio',
+    },
+    "linkedin": {
+        'format': 'best[ext=mp4]/best',
+    },
 }
 
 
@@ -230,15 +263,16 @@ async def download_media(url: str, platform: str = "unknown") -> Tuple[Optional[
                 else:
                     return None, "video", title
 
-            image_exts = {"jpg", "jpeg", "png", "webp", "gif"}
-            audio_exts = {"mp3", "m4a", "ogg", "wav", "flac", "opus"}
             ext_lower = ext.lower()
-            if ext_lower in image_exts:
+            if ext_lower in IMAGE_EXTS:
                 media_type = "photo"
-            elif ext_lower in audio_exts:
+            elif ext_lower in AUDIO_EXTS:
                 media_type = "audio"
-            else:
+            elif ext_lower in VIDEO_EXTS:
                 media_type = "video"
+            else:
+                logger.warning("[%s] Treating unknown extension '%s' as document for %s", platform, ext_lower, url)
+                media_type = "document"
 
             return filepath, media_type, title
 

@@ -4,15 +4,18 @@ import csv
 import json
 import io
 from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import func
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from bot.database import (
     SessionLocal, User, AdminUser, SubscriptionChannel, PublishChannel,
-    ChannelGroup, ScheduledPost, BroadcastLog, SavedAd, AntiFloodSettings,
+    ChannelGroup, ScheduledPost, BroadcastLog, SavedAd, AntiFloodSettings, Download,
     UserStatus, AdminPermission, get_setting, set_setting, AdminActivityLog
 )
 from bot.services import DownloadService
+from bot.utils.platforms import PLATFORMS
 from .keyboards import (
     admin_main_keyboard, users_menu_keyboard, admins_menu_keyboard,
     subscription_menu_keyboard, publish_menu_keyboard, broadcast_menu_keyboard,
@@ -1843,19 +1846,18 @@ async def _handle_stats_users(query, db):
 
 
 async def _handle_stats_platforms(query, db):
-    users = db.query(User).all()
-    tiktok = sum(u.tiktok_count for u in users)
-    youtube = sum(u.youtube_count for u in users)
-    instagram = sum(u.instagram_count for u in users)
-    likee = sum(u.likee_count for u in users)
-    total = tiktok + youtube + instagram + likee
-
+    rows = (
+        db.query(Download.platform, func.count(Download.id))
+        .filter(Download.success.is_(True))
+        .group_by(Download.platform)
+        .all()
+    )
+    counts = {platform: count for platform, count in rows}
+    total = sum(counts.values())
+    lines = [f"{info['emoji']} {info['name']}: {counts.get(key, 0)} تحميل" for key, info in PLATFORMS.items()]
     text = (
         f"🌐 **إحصائيات المنصات**\n\n"
-        f"🎵 TikTok: {tiktok} تحميل\n"
-        f"📺 YouTube: {youtube} تحميل\n"
-        f"📷 Instagram: {instagram} تحميل\n"
-        f"❤️ Likee: {likee} تحميل\n\n"
+        f"{chr(10).join(lines)}\n\n"
         f"📊 الإجمالي: {total} تحميل"
     )
     await query.edit_message_text(text, reply_markup=back_keyboard("adm_stats"), parse_mode="Markdown")
