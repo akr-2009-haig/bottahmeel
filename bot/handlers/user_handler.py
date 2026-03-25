@@ -1,5 +1,6 @@
 import logging
 import os
+import json
 
 from telegram import CallbackQuery
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, Update
@@ -110,9 +111,13 @@ async def check_subscriptions(user_id: int, bot) -> tuple[bool, list]:
 
         unsubscribed = []
         for ch in channels:
+            if ch.chat_type == "bot":
+                logger.warning("Skipping unsupported bot subscription target id=%s chat_id=%s", ch.id, ch.chat_id)
+                continue
             try:
                 member = await bot.get_chat_member(ch.chat_id, user_id)
-                if member.status in ("left", "kicked", "banned"):
+                is_member = getattr(member, "is_member", None)
+                if member.status in ("left", "kicked", "banned") or (member.status == "restricted" and is_member is False):
                     unsubscribed.append(ch)
             except Exception as e:
                 logger.error(f"Error checking subscription for {ch.chat_id}: {e}")
@@ -121,6 +126,28 @@ async def check_subscriptions(user_id: int, bot) -> tuple[bool, list]:
         return len(unsubscribed) == 0, unsubscribed
     finally:
         db.close()
+
+
+def build_subscription_keyboard(channels: list, lang: str) -> InlineKeyboardMarkup:
+    keyboard = []
+    for ch in channels:
+        title = ch.title or f"قناة {ch.id}"
+        link = ch.invite_link or (f"https://t.me/{ch.username}" if ch.username else "#")
+        keyboard.append([InlineKeyboardButton(f"📢 {title}", url=link)])
+
+    try:
+        extra_buttons = json.loads(get_setting("sub_buttons_json", "[]"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        extra_buttons = []
+
+    for button in extra_buttons:
+        label = str((button or {}).get("label", "")).strip()
+        url = str((button or {}).get("url", "")).strip()
+        if label and url:
+            keyboard.append([InlineKeyboardButton(label, url=url)])
+
+    keyboard.append([InlineKeyboardButton(get_string("check_subscription", lang), callback_data="check_sub")])
+    return InlineKeyboardMarkup(keyboard)
 
 
 # ─── /start ───────────────────────────────────────────────────────────────────
@@ -145,18 +172,11 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             unsubscribed = []
 
         if not is_subscribed:
-            keyboard = []
-            for ch in unsubscribed:
-                title = ch.title or f"قناة {ch.id}"
-                link = ch.invite_link or (f"https://t.me/{ch.username}" if ch.username else "#")
-                keyboard.append([InlineKeyboardButton(f"📢 {title}", url=link)])
-            keyboard.append([InlineKeyboardButton(get_string("check_subscription", lang), callback_data="check_sub")])
-
             sub_msg = get_lang_setting("subscription_message", lang, get_string("subscribe_required", lang))
             welcome = get_string("welcome", lang, name=get_user_name(user))
             await update.message.reply_text(
                 f"{welcome}\n\n{sub_msg}",
-                reply_markup=InlineKeyboardMarkup(keyboard)
+                reply_markup=build_subscription_keyboard(unsubscribed, lang)
             )
             return
 
@@ -280,14 +300,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 name = get_user_name(user)
                 await _show_welcome(query, context, db_user, name, lang)
             else:
-                keyboard = []
-                for ch in unsubscribed:
-                    title = ch.title or f"قناة {ch.id}"
-                    link = ch.invite_link or (f"https://t.me/{ch.username}" if ch.username else "#")
-                    keyboard.append([InlineKeyboardButton(f"📢 {title}", url=link)])
-                keyboard.append([InlineKeyboardButton(get_string("check_subscription", lang), callback_data="check_sub")])
                 await query.answer(get_string("not_subscribed", lang), show_alert=True)
-                await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+                await query.edit_message_reply_markup(reply_markup=build_subscription_keyboard(unsubscribed, lang))
 
         elif data.startswith("lang_"):
             new_lang = data[len("lang_"):]
@@ -352,15 +366,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if sub_enabled:
             is_subscribed, unsubscribed = await check_subscriptions(user.id, context.bot)
             if not is_subscribed:
-                keyboard = []
-                for ch in unsubscribed:
-                    title = ch.title or f"قناة {ch.id}"
-                    link = ch.invite_link or (f"https://t.me/{ch.username}" if ch.username else "#")
-                    keyboard.append([InlineKeyboardButton(f"📢 {title}", url=link)])
-                keyboard.append([InlineKeyboardButton(get_string("check_subscription", lang), callback_data="check_sub")])
                 await update.message.reply_text(
                     get_lang_setting("subscription_message", lang, get_string("subscribe_required", lang)),
-                    reply_markup=InlineKeyboardMarkup(keyboard)
+                    reply_markup=build_subscription_keyboard(unsubscribed, lang)
                 )
                 return
 

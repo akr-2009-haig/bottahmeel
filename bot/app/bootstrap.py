@@ -19,9 +19,11 @@ ADMIN_CB_PREFIXES = [
     "adm_", "ui_",
     "ban_user_", "unban_user_", "delete_user_",
     "confirm_ban_", "confirm_unban_", "confirm_delete_user_",
+    "user_info_",
     "admin_details_", "disable_admin_", "enable_admin_",
     "delete_admin_", "confirm_disable_admin_", "confirm_delete_admin_",
     "edit_admin_perms_", "toggle_perm_", "perms_", "sub_",
+    "sub3_",
     "delete_sub_", "confirm_delete_sub_", "delete_pub_", "confirm_delete_pub_",
     "bc_", "do_broadcast_", "view_ad_", "delete_ad_",
     "af_", "toggle_ignore_inactive", "confirm_af_reset",
@@ -40,6 +42,7 @@ ADMIN_WAIT_PREFIXES = [
     "af_delay_custom", "af_retry_custom", "search_admin", "ad_title", "ad_text",
     "ui_msg_text_", "ui_btn_label", "ui_btn_data_", "ui_btn_data_reply",
     "ui_wa_label", "ui_wa_url", "ui_lang_tr_", "ui_plat_msg_", "ui_caption_",
+    "sub3_",
 ]
 
 
