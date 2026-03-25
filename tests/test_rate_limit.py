@@ -41,3 +41,16 @@ class RateLimitTests(unittest.TestCase):
             allowed, retry_after = rate_limit_module.check_download_rate_limit(999, is_admin=True)
             self.assertTrue(allowed)
             self.assertEqual(retry_after, 0)
+
+    def test_default_settings_match_four_requests_per_half_hour(self):
+        with patch.dict(os.environ, {
+            "RATE_LIMIT_REQUESTS_PER_WINDOW": "",
+            "RATE_LIMIT_WINDOW_SECONDS": "",
+            "RATE_LIMIT_BLOCK_SECONDS": "",
+        }, clear=False):
+            load_settings.cache_clear()
+            settings = load_settings()
+
+        self.assertEqual(settings.rate_limit_requests_per_window, 4)
+        self.assertEqual(settings.rate_limit_window_seconds, 1800)
+        self.assertEqual(settings.rate_limit_block_seconds, 1800)

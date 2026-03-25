@@ -166,6 +166,8 @@ async def _process_download(bot: Bot, payload: dict) -> dict:
     platform = payload["platform"]
     lang = payload.get("lang") or "ar"
     status_message_id = payload.get("status_message_id")
+    download_mode = payload.get("download_mode") or "default"
+    caption_override = payload.get("caption_override")
 
     db = SessionLocal()
     try:
@@ -174,14 +176,14 @@ async def _process_download(bot: Bot, payload: dict) -> dict:
             raise RuntimeError(f"User {user_id} not found")
         await _notify_download_job_state(bot, payload, state="processing")
         await bot.send_chat_action(chat_id=chat_id, action=get_setting("activity_status", "upload_video"))
-        filepath, media_type, _title = await download_media(url, platform)
+        filepath, media_type, _title = await download_media(url, platform, download_mode=download_mode)
         if not filepath:
             error_text = get_setting(f"error_message_{lang}", get_setting("error_message", get_string("error", lang)))
             await _safe_edit_message(bot, chat_id, status_message_id, error_text)
             DownloadService.record_download_result(user_id=user_id, platform=platform, url=url, media_type="video", success=False)
             return {"status": "failed"}
 
-        caption = DownloadService.build_caption(
+        caption = caption_override or DownloadService.build_caption(
             media_type=media_type,
             lang=lang,
             telegram_user=db_user,
@@ -195,6 +197,8 @@ async def _process_download(bot: Bot, payload: dict) -> dict:
                     await bot.send_photo(chat_id=chat_id, photo=media_handle, caption=caption, reply_markup=main_markup)
                 elif media_type == "audio":
                     await bot.send_audio(chat_id=chat_id, audio=media_handle, caption=caption, reply_markup=main_markup)
+                elif media_type == "voice":
+                    await bot.send_voice(chat_id=chat_id, voice=media_handle, caption=caption, reply_markup=main_markup)
                 elif media_type == "document":
                     await bot.send_document(chat_id=chat_id, document=media_handle, caption=caption, reply_markup=main_markup)
                 else:

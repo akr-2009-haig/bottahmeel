@@ -29,7 +29,17 @@ class DownloadService:
     scheduled_post_job_type = "scheduled_post"
 
     @staticmethod
-    def enqueue_download(*, user_id: int, chat_id: int, url: str, platform: str, lang: str, status_message_id: int) -> int:
+    def enqueue_download(
+        *,
+        user_id: int,
+        chat_id: int,
+        url: str,
+        platform: str,
+        lang: str,
+        status_message_id: int,
+        download_mode: str = "default",
+        caption_override: str | None = None,
+    ) -> int:
         payload = {
             "user_id": user_id,
             "chat_id": chat_id,
@@ -37,6 +47,8 @@ class DownloadService:
             "platform": platform,
             "lang": lang,
             "status_message_id": status_message_id,
+            "download_mode": download_mode,
+            "caption_override": caption_override,
         }
         return enqueue_job(DownloadService.job_type, payload, priority=10, max_attempts=3)
 

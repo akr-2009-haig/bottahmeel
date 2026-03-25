@@ -97,7 +97,7 @@ def load_settings() -> AppSettings:
         healthcheck_port=int(os.environ.get("HEALTHCHECK_PORT", "8081").strip() or "8081"),
         enable_healthcheck=os.environ.get("ENABLE_HEALTHCHECK", "true").strip().lower() == "true",
         log_level=os.environ.get("LOG_LEVEL", "INFO").strip().upper() or "INFO",
-        rate_limit_requests_per_window=int(os.environ.get("RATE_LIMIT_REQUESTS_PER_WINDOW", "5").strip() or "5"),
-        rate_limit_window_seconds=int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "60").strip() or "60"),
-        rate_limit_block_seconds=int(os.environ.get("RATE_LIMIT_BLOCK_SECONDS", "120").strip() or "120"),
+        rate_limit_requests_per_window=int(os.environ.get("RATE_LIMIT_REQUESTS_PER_WINDOW", "4").strip() or "4"),
+        rate_limit_window_seconds=int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "1800").strip() or "1800"),
+        rate_limit_block_seconds=int(os.environ.get("RATE_LIMIT_BLOCK_SECONDS", "1800").strip() or "1800"),
     )
