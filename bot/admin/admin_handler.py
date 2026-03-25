@@ -138,6 +138,25 @@ def _broadcast_runtime_status(log: BroadcastLog) -> str:
     return "pending"
 
 
+def _broadcast_media_label(media_type: str | None) -> str:
+    return {
+        None: "✉️ رسالة نصية",
+        "photo": "🖼 صورة",
+        "video": "🎥 فيديو",
+        "document": "📎 ملف",
+    }.get(media_type, "📣 إذاعة")
+
+
+def _broadcast_media_from_waiting(waiting: str) -> tuple[str | None, str | None]:
+    if waiting.startswith("bc_media_photo_"):
+        return "photo", waiting.replace("bc_media_photo_", "")
+    if waiting.startswith("bc_media_video_"):
+        return "video", waiting.replace("bc_media_video_", "")
+    if waiting.startswith("bc_media_document_"):
+        return "document", waiting.replace("bc_media_document_", "")
+    return None, None
+
+
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     db = SessionLocal()
@@ -465,6 +484,7 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif data == "perms_save":
             admin_id = context.user_data.get("editing_admin_id")
+            new_admin_id = context.user_data.get("new_admin_id")
             selected = context.user_data.get("selected_perms", [])
             if admin_id:
                 admin_obj = db.query(AdminUser).filter_by(id=admin_id).first()
@@ -472,6 +492,18 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     admin_obj.permissions = selected
                     db.commit()
                     await query.answer("✅ تم حفظ الصلاحيات بنجاح", show_alert=True)
+            elif new_admin_id:
+                db.add(AdminUser(
+                    telegram_id=new_admin_id,
+                    permissions=selected,
+                    is_active=True,
+                    added_by=query.from_user.id,
+                ))
+                db.commit()
+                await query.answer("✅ تم إنشاء المشرف وحفظ صلاحياته", show_alert=True)
+            context.user_data.pop("editing_admin_id", None)
+            context.user_data.pop("new_admin_id", None)
+            context.user_data.pop("selected_perms", None)
             await query.edit_message_text(
                 "👮 **إدارة المشرفين**", reply_markup=admins_menu_keyboard(), parse_mode="Markdown"
             )
@@ -542,6 +574,9 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "📢 **إدارة الاشتراك الإجباري**", reply_markup=subscription_menu_keyboard(), parse_mode="Markdown"
             )
 
+        elif data == "adm_sub_delete":
+            await _handle_sub_list(query, db, 0)
+
         elif data.startswith("adm_pub_list_"):
             page = int(data.split("_")[-1])
             await _handle_pub_list(query, db, page)
@@ -572,6 +607,9 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "📡 **قنوات النشر**", reply_markup=publish_menu_keyboard(), parse_mode="Markdown"
             )
 
+        elif data == "adm_pub_delete":
+            await _handle_pub_list(query, db, 0)
+
         elif data == "adm_bc_users":
             await query.edit_message_text(
                 "👥 **إذاعة للمستخدمين**\n\nاختر الإجراء:",
@@ -595,14 +633,50 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
 
+        elif data.startswith("bc_photo_") or data.startswith("bc_video_") or data.startswith("bc_file_"):
+            prefix_map = {
+                "bc_photo_": ("photo", "صورة"),
+                "bc_video_": ("video", "فيديو"),
+                "bc_file_": ("document", "ملف"),
+            }
+            prefix = next(key for key in prefix_map if data.startswith(key))
+            media_type, label = prefix_map[prefix]
+            target = data.replace(prefix, "")
+            context.user_data["waiting_for"] = f"bc_media_{media_type}_{target}"
+            await query.edit_message_text(
+                f"📎 **إضافة {label} للإذاعة**\n\nأرسل {label} الآن. يمكنك إضافة نص في الـ caption أو كتابته لاحقاً.",
+                reply_markup=back_keyboard("adm_broadcast"),
+                parse_mode="Markdown"
+            )
+
+        elif data.startswith("bc_send_all_") or data.startswith("bc_send_active_"):
+            target = data.split("_")[-1]
+            context.user_data["bc_scope"] = "active" if data.startswith("bc_send_active_") else "all"
+            await query.answer("✅ تم تحديث نطاق الإرسال", show_alert=True)
+            await query.edit_message_text(
+                "📣 **إعداد الإذاعة**\n\n"
+                f"🎯 المستهدف: {'المستخدمين' if target == 'users' else 'القنوات'}\n"
+                f"👥 النطاق: {'النشطين فقط' if context.user_data['bc_scope'] == 'active' else 'الكل'}\n"
+                f"🧾 النوع: {_broadcast_media_label(context.user_data.get('bc_media_type'))}\n"
+                f"📝 النص: {'موجود' if context.user_data.get('bc_text') else 'غير موجود'}",
+                reply_markup=broadcast_compose_keyboard(target),
+                parse_mode="Markdown"
+            )
+
         elif data.startswith("bc_confirm_"):
             target = data.replace("bc_confirm_", "")
             bc_text = context.user_data.get("bc_text", "")
-            if not bc_text:
-                await query.answer("❌ لم تكتب نص الرسالة بعد", show_alert=True)
+            media_type = context.user_data.get("bc_media_type")
+            scope = context.user_data.get("bc_scope", "all")
+            if not bc_text and not media_type:
+                await query.answer("❌ أضف نصاً أو وسائط قبل الإرسال", show_alert=True)
                 return
             await query.edit_message_text(
-                f"⚠️ **تأكيد الإرسال**\n\nالرسالة:\n{bc_text}\n\nالمستهدف: {'المستخدمين' if target == 'users' else 'القنوات'}",
+                "⚠️ **تأكيد الإرسال**\n\n"
+                f"🧾 النوع: {_broadcast_media_label(media_type)}\n"
+                f"🎯 المستهدف: {'المستخدمين' if target == 'users' else 'القنوات'}\n"
+                f"👥 النطاق: {'النشطين فقط' if scope == 'active' else 'الكل'}\n"
+                f"📝 الرسالة:\n{bc_text or 'بدون نص'}",
                 reply_markup=confirm_keyboard(f"do_broadcast_{target}", "adm_broadcast"),
                 parse_mode="Markdown"
             )
@@ -641,6 +715,19 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif data == "adm_sched_active":
             await _handle_active_scheduled(query, db)
+
+        elif data == "adm_sched_pause":
+            await _handle_active_scheduled(query, db)
+
+        elif data == "adm_sched_resume":
+            await _handle_inactive_scheduled(query, db)
+
+        elif data == "adm_sched_delete":
+            await _handle_sched_list(query, db, 0)
+
+        elif data.startswith("sched_repeat_"):
+            repeat_type = data.replace("sched_repeat_", "")
+            await _create_scheduled_post(query, context, db, user.id, repeat_type)
 
         elif data.startswith("pause_sched_"):
             sched_id = int(data.split("_")[-1])
@@ -685,6 +772,15 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             page = int(data.split("_")[-1])
             await _handle_groups_list(query, db, page)
 
+        elif data == "adm_pub_groups":
+            await _handle_publish_groups(query, db)
+
+        elif data == "adm_grp_entities":
+            await _handle_publish_groups(query, db)
+
+        elif data == "adm_grp_delete":
+            await _handle_groups_list(query, db, 0)
+
         elif data == "adm_grp_create":
             context.user_data["waiting_for"] = "create_group_name"
             await query.edit_message_text(
@@ -692,6 +788,34 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=back_keyboard("adm_groups"),
                 parse_mode="Markdown"
             )
+
+        elif data == "adm_grp_search":
+            context.user_data["waiting_for"] = "search_group"
+            await query.edit_message_text(
+                "🔍 **البحث عن مجموعة**\n\nأرسل رقم المجموعة أو جزءاً من اسمها:",
+                reply_markup=back_keyboard("adm_groups"),
+                parse_mode="Markdown"
+            )
+
+        elif data == "adm_grp_edit":
+            context.user_data["waiting_for"] = "rename_group"
+            await query.edit_message_text(
+                "✏️ **تعديل مجموعة**\n\nأرسل الرسالة بالصيغة:\n`معرف_المجموعة | الاسم الجديد`",
+                reply_markup=back_keyboard("adm_groups"),
+                parse_mode="Markdown"
+            )
+
+        elif data == "adm_grp_add_entity":
+            context.user_data["waiting_for"] = "group_add_entity"
+            await query.edit_message_text(
+                "➕ **إضافة جهة إلى مجموعة**\n\nأرسل الرسالة بالصيغة:\n`معرف_المجموعة | معرف_جهة_النشر`",
+                reply_markup=back_keyboard("adm_groups"),
+                parse_mode="Markdown"
+            )
+
+        elif data.startswith("group_details_"):
+            group_id = int(data.split("_")[-1])
+            await _handle_group_details(query, db, group_id)
 
         elif data.startswith("delete_group_"):
             grp_id = int(data.split("_")[-1])
@@ -844,6 +968,9 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "adm_stats_broadcast":
             await _handle_stats_broadcast(query, db)
 
+        elif data == "adm_stats_scheduled":
+            await _handle_stats_scheduled(query, db)
+
         elif data == "adm_stats_refresh":
             await query.edit_message_text(
                 "📊 **الإحصائيات**\n\nاختر الإجراء:",
@@ -877,6 +1004,25 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "adm_set_platforms":
             from .ui_handler import ui_platforms_main
             await ui_platforms_main(query, context)
+
+        elif data == "adm_set_buttons":
+            from .ui_handler import ui_buttons_main
+            await ui_buttons_main(query, context)
+
+        elif data == "adm_set_lang":
+            from .ui_handler import ui_langs_main
+            await ui_langs_main(query, context)
+
+        elif data == "adm_set_download":
+            settings = load_settings()
+            await query.edit_message_text(
+                "🧠 **إعدادات التحميل**\n\n"
+                f"👷 حجم دفعة العامل: {settings.worker_batch_size}\n"
+                f"⏱ فاصل العامل: {settings.worker_poll_interval} ثانية\n"
+                f"🧹 تنظيف الملفات المؤقتة: {settings.temp_cleanup_hours} ساعة",
+                reply_markup=back_keyboard("adm_settings"),
+                parse_mode="Markdown"
+            )
 
         elif data.startswith("toggle_"):
             from bot.utils.platforms import PLATFORMS
@@ -1204,6 +1350,7 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif data == "adm_users_send_multi":
             context.user_data["waiting_for"] = "bc_text_users"
+            context.user_data["bc_scope"] = "all"
             await query.edit_message_text(
                 "📨 **إرسال رسالة لعدة مستخدمين**\n\nأرسل نص الرسالة:",
                 reply_markup=back_keyboard("adm_users"),
@@ -1236,11 +1383,36 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _handle_saved_ads(query, db)
 
         elif data == "adm_bc_delete_ad":
+            await _handle_saved_ads(query, db)
+
+        elif data.startswith("view_ad_"):
+            ad_id = int(data.split("_")[-1])
+            ad = db.query(SavedAd).filter_by(id=ad_id).first()
+            if not ad:
+                await query.answer("❌ الإعلان غير موجود", show_alert=True)
+                return
             await query.edit_message_text(
-                "🗑 **حذف إعلان**\n\nاختر إعلاناً من القائمة المحفوظة لحذفه.",
-                reply_markup=back_keyboard("adm_broadcast"),
+                "📢 **تفاصيل الإعلان**\n\n"
+                f"🆔 المعرف: `{ad.id}`\n"
+                f"🏷 العنوان: {ad.title or 'بدون عنوان'}\n"
+                f"🧾 النوع: {_broadcast_media_label(ad.media_type)}\n"
+                f"📨 مرات الإرسال: {ad.send_count}\n\n"
+                f"{ad.text or 'بدون نص'}",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🗑 حذف", callback_data=f"delete_ad_{ad.id}")],
+                    [InlineKeyboardButton("🔙 رجوع", callback_data="adm_bc_saved_ads")],
+                ]),
                 parse_mode="Markdown"
             )
+
+        elif data.startswith("delete_ad_"):
+            ad_id = int(data.split("_")[-1])
+            ad = db.query(SavedAd).filter_by(id=ad_id).first()
+            if ad:
+                db.delete(ad)
+                db.commit()
+                await query.answer("🗑 تم حذف الإعلان", show_alert=True)
+            await _handle_saved_ads(query, db)
 
     except Exception as e:
         logger.error(f"Admin callback error for {data}: {e}", exc_info=True)
@@ -1253,7 +1425,7 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
+    if not update.message:
         return
     user = update.effective_user
     db = SessionLocal()
@@ -1265,7 +1437,37 @@ async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
         if not waiting:
             return
 
-        text = update.message.text.strip()
+        if waiting.startswith("bc_media_"):
+            media_type, target = _broadcast_media_from_waiting(waiting)
+            file_id = None
+            if media_type == "photo" and update.message.photo:
+                file_id = update.message.photo[-1].file_id
+            elif media_type == "video" and update.message.video:
+                file_id = update.message.video.file_id
+            elif media_type == "document" and update.message.document:
+                file_id = update.message.document.file_id
+            if not file_id or not target:
+                await update.message.reply_text("❌ أرسل نوع الوسائط المطلوب فقط.")
+                return
+            context.user_data["bc_media_type"] = media_type
+            context.user_data["bc_media_file_id"] = file_id
+            if update.message.caption and not context.user_data.get("bc_text"):
+                context.user_data["bc_text"] = update.message.caption.strip()
+            context.user_data["waiting_for"] = None
+            await update.message.reply_text(
+                "✅ تم حفظ وسائط الإذاعة.\n\n"
+                f"🧾 النوع: {_broadcast_media_label(media_type)}\n"
+                f"📝 النص: {'موجود' if context.user_data.get('bc_text') else 'غير موجود'}",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📤 تأكيد الإرسال", callback_data=f"bc_confirm_{target}")],
+                    [InlineKeyboardButton("❌ إلغاء", callback_data="adm_broadcast")],
+                ])
+            )
+            return
+
+        text = (update.message.text or update.message.caption or "").strip()
+        if not text:
+            return
 
         if waiting and (
             waiting.startswith("ui_") or
@@ -1370,6 +1572,73 @@ async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 parse_mode="Markdown"
             )
             context.user_data["waiting_for"] = None
+            return
+
+        elif waiting == "search_group":
+            result = None
+            if text.isdigit():
+                result = db.query(ChannelGroup).filter_by(id=int(text)).first()
+            else:
+                result = db.query(ChannelGroup).filter(ChannelGroup.name.ilike(f"%{text}%")).first()
+            if result:
+                channels = db.query(PublishChannel).filter_by(group_id=result.id).order_by(PublishChannel.id.asc()).all()
+                lines = "\n".join(
+                    f"• {ch.title or ch.username or ch.chat_id} (ID: {ch.id})"
+                    for ch in channels
+                ) or "لا توجد جهات نشر داخل هذه المجموعة."
+                await update.message.reply_text(
+                    f"📂 **نتيجة البحث**\n\n"
+                    f"🆔 المعرف: `{result.id}`\n"
+                    f"🏷 الاسم: {result.name}\n"
+                    f"📡 الجهات:\n{lines}",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("📂 التفاصيل", callback_data=f"group_details_{result.id}")],
+                        [InlineKeyboardButton("🔙 رجوع", callback_data="adm_groups")],
+                    ]),
+                    parse_mode="Markdown"
+                )
+            else:
+                await update.message.reply_text("❌ لم يتم العثور على المجموعة.")
+            context.user_data["waiting_for"] = None
+            return
+
+        elif waiting == "rename_group":
+            try:
+                group_id_raw, new_name = [part.strip() for part in text.split("|", 1)]
+                group = db.query(ChannelGroup).filter_by(id=int(group_id_raw)).first()
+            except ValueError:
+                group = None
+            if not group or not new_name:
+                await update.message.reply_text("❌ استخدم الصيغة: `معرف_المجموعة | الاسم الجديد`", parse_mode="Markdown")
+                return
+            group.name = new_name
+            db.commit()
+            context.user_data["waiting_for"] = None
+            await update.message.reply_text(
+                f"✅ تم تحديث اسم المجموعة إلى: {new_name}",
+                reply_markup=groups_menu_keyboard(),
+            )
+            return
+
+        elif waiting == "group_add_entity":
+            try:
+                group_id_raw, channel_id_raw = [part.strip() for part in text.split("|", 1)]
+                group = db.query(ChannelGroup).filter_by(id=int(group_id_raw)).first()
+                channel = db.query(PublishChannel).filter_by(id=int(channel_id_raw)).first()
+            except ValueError:
+                group = None
+                channel = None
+            if not group or not channel:
+                await update.message.reply_text("❌ استخدم الصيغة: `معرف_المجموعة | معرف_جهة_النشر` مع معرفات صحيحة.", parse_mode="Markdown")
+                return
+            channel.group_id = group.id
+            db.commit()
+            context.user_data["waiting_for"] = None
+            await update.message.reply_text(
+                f"✅ تمت إضافة **{channel.title or channel.username or channel.chat_id}** إلى المجموعة **{group.name}**.",
+                reply_markup=groups_menu_keyboard(),
+                parse_mode="Markdown",
+            )
             return
 
         elif waiting == "search_user":
@@ -1534,27 +1803,13 @@ async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 await update.message.reply_text("❌ يجب أن يكون وقت النشر في المستقبل.")
                 return
 
-            post = ScheduledPost(
-                text=sched_data.get("text"),
-                channel_ids=sched_data.get("channel_ids") or [],
-                scheduled_at=scheduled_at,
-                repeat_type="once",
-                is_active=True,
-                is_sent=False,
-                created_by=user.id,
-            )
-            db.add(post)
-            db.commit()
-            db.refresh(post)
+            sched_data["scheduled_at"] = scheduled_at
+            context.user_data["sched_data"] = sched_data
             context.user_data["waiting_for"] = None
-            context.user_data.pop("sched_data", None)
             await update.message.reply_text(
-                "✅ تم حفظ المنشور المجدول.\n\n"
-                f"🆔 المعرف: {post.id}\n"
-                f"🕒 الموعد: {scheduled_at.strftime('%Y-%m-%d %H:%M')} UTC\n"
-                f"📡 القنوات المستهدفة: {len(post.channel_ids or [])}\n"
-                "⚙️ سيتم تحويله إلى مهمة خلفية عند حلول الموعد.",
-                reply_markup=scheduled_menu_keyboard(),
+                "🔁 **تحديد تكرار المنشور**\n\nاختر نوع التكرار:",
+                reply_markup=repeat_type_keyboard(),
+                parse_mode="Markdown",
             )
             return
 
@@ -2002,6 +2257,70 @@ async def _handle_active_scheduled(query, db):
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
 
 
+async def _handle_inactive_scheduled(query, db):
+    posts = db.query(ScheduledPost).filter_by(is_active=False, is_sent=False).order_by(ScheduledPost.scheduled_at).all()
+    if not posts:
+        await query.edit_message_text(
+            "▶️ لا توجد منشورات متوقفة حالياً.",
+            reply_markup=back_keyboard("adm_scheduled"),
+            parse_mode="Markdown"
+        )
+        return
+    text = f"▶️ **المنشورات المتوقفة** ({len(posts)})\n\n"
+    buttons = []
+    for post in posts:
+        when = post.scheduled_at.strftime('%Y-%m-%d %H:%M') if post.scheduled_at else "غير محدد"
+        text += f"• {(post.text or 'بدون نص')[:30]} | {when}\n"
+        buttons.append([InlineKeyboardButton("▶️ تشغيل", callback_data=f"resume_sched_{post.id}")])
+    buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data="adm_scheduled")])
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
+
+
+async def _handle_publish_groups(query, db):
+    groups = db.query(ChannelGroup).order_by(ChannelGroup.name.asc()).all()
+    if not groups:
+        await query.edit_message_text(
+            "📂 لا توجد مجموعات نشر مضافة.",
+            reply_markup=back_keyboard("adm_publish"),
+            parse_mode="Markdown"
+        )
+        return
+    text = "📂 **مجموعات النشر**\n\n"
+    buttons = []
+    for group in groups:
+        count = db.query(PublishChannel).filter_by(group_id=group.id).count()
+        text += f"• {group.name} — {count} جهة نشر\n"
+        buttons.append([InlineKeyboardButton(f"📂 {group.name[:30]}", callback_data=f"group_details_{group.id}")])
+    buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data="adm_publish")])
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
+
+
+async def _handle_group_details(query, db, group_id: int):
+    group = db.query(ChannelGroup).filter_by(id=group_id).first()
+    if not group:
+        await query.answer("❌ المجموعة غير موجودة", show_alert=True)
+        return
+    channels = db.query(PublishChannel).filter_by(group_id=group.id).order_by(PublishChannel.id.asc()).all()
+    lines = [
+        f"• {(channel.title or channel.username or channel.chat_id)} (ID: {channel.id})"
+        for channel in channels
+    ] or ["لا توجد جهات نشر داخل هذه المجموعة."]
+    await query.edit_message_text(
+        f"📂 **تفاصيل المجموعة**\n\n"
+        f"🆔 المعرف: `{group.id}`\n"
+        f"🏷 الاسم: {group.name}\n"
+        f"📡 عدد الجهات: {len(channels)}\n\n"
+        + "\n".join(lines),
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("➕ إضافة جهة", callback_data="adm_grp_add_entity")],
+            [InlineKeyboardButton("✏️ تعديل", callback_data="adm_grp_edit"),
+             InlineKeyboardButton("🗑 حذف", callback_data=f"delete_group_{group.id}")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data="adm_groups")],
+        ]),
+        parse_mode="Markdown"
+    )
+
+
 async def _handle_groups_list(query, db, page: int):
     per_page = 5
     groups = db.query(ChannelGroup).offset(page * per_page).limit(per_page).all()
@@ -2035,6 +2354,22 @@ async def _handle_groups_list(query, db, page: int):
     buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data="adm_groups")])
 
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
+
+
+async def _handle_stats_scheduled(query, db):
+    total = db.query(ScheduledPost).count()
+    active = db.query(ScheduledPost).filter_by(is_active=True, is_sent=False).count()
+    completed = db.query(ScheduledPost).filter_by(is_sent=True).count()
+    failed = db.query(ScheduledPost).filter(ScheduledPost.last_error.isnot(None)).count()
+    await query.edit_message_text(
+        f"🗓 **إحصائيات النشر المجدول**\n\n"
+        f"📋 الإجمالي: {total}\n"
+        f"▶️ النشط: {active}\n"
+        f"✅ المكتمل: {completed}\n"
+        f"⚠️ الذي يحتوي أخطاء: {failed}",
+        reply_markup=back_keyboard("adm_stats"),
+        parse_mode="Markdown"
+    )
 
 
 async def _handle_stats_users(query, db):
@@ -2198,8 +2533,11 @@ async def _handle_saved_ads(query, db):
 
 async def _do_broadcast(query, context, db, target: str):
     bc_text = context.user_data.get("bc_text", "")
-    if not bc_text:
-        await query.answer("❌ لا توجد رسالة", show_alert=True)
+    scope = context.user_data.get("bc_scope", "all")
+    media_type = context.user_data.get("bc_media_type")
+    media_file_id = context.user_data.get("bc_media_file_id")
+    if not bc_text and not media_type:
+        await query.answer("❌ لا توجد رسالة أو وسائط", show_alert=True)
         return
 
     log = BroadcastLog(
@@ -2218,23 +2556,76 @@ async def _do_broadcast(query, context, db, target: str):
         target=target,
         broadcast_log_id=log.id,
         offset=0,
+        scope=scope,
+        media_type=media_type,
+        media_file_id=media_file_id,
     )
     log.status = "pending"
     log.last_job_id = job_id
     log.error_message = None
     db.commit()
 
-    context.user_data["bc_text"] = ""
+    context.user_data.pop("bc_text", None)
+    context.user_data.pop("bc_scope", None)
+    context.user_data.pop("bc_media_type", None)
+    context.user_data.pop("bc_media_file_id", None)
     await query.edit_message_text(
         f"✅ **تمت جدولة الإذاعة**\n\n"
         f"🆔 المهمة: `{job_id}`\n"
         f"📣 النوع: {target}\n"
+        f"🧾 المحتوى: {_broadcast_media_label(media_type)}\n"
+        f"👥 النطاق: {'النشطين فقط' if scope == 'active' else 'الكل'}\n"
         f"⏳ ستتم المعالجة في الخلفية بواسطة العامل.",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("📊 متابعة التقدم", callback_data=f"adm_bc_progress_{log.id}")],
             [InlineKeyboardButton("🔙 رجوع", callback_data="adm_broadcast"),
              InlineKeyboardButton("🏠 الرئيسية", callback_data="adm_main")],
         ]),
+        parse_mode="Markdown"
+    )
+
+
+async def _create_scheduled_post(query, context, db, created_by: int, repeat_type: str):
+    sched_data = context.user_data.get("sched_data") or {}
+    scheduled_at = sched_data.get("scheduled_at")
+    if not scheduled_at:
+        await query.answer("❌ انتهت جلسة إنشاء المنشور. أعد المحاولة.", show_alert=True)
+        await query.edit_message_text(
+            "🗓 **النشر المجدول**\n\nاختر الإجراء:",
+            reply_markup=scheduled_menu_keyboard(),
+            parse_mode="Markdown"
+        )
+        return
+    if not isinstance(scheduled_at, datetime):
+        context.user_data.pop("sched_data", None)
+        await query.answer("❌ وقت الجدولة غير صالح. أعد إنشاء المنشور.", show_alert=True)
+        await query.edit_message_text(
+            "🗓 **النشر المجدول**\n\nاختر الإجراء:",
+            reply_markup=scheduled_menu_keyboard(),
+            parse_mode="Markdown"
+        )
+        return
+    post = ScheduledPost(
+        text=sched_data.get("text"),
+        channel_ids=sched_data.get("channel_ids") or [],
+        scheduled_at=scheduled_at,
+        repeat_type=repeat_type,
+        is_active=True,
+        is_sent=False,
+        created_by=created_by,
+    )
+    db.add(post)
+    db.commit()
+    db.refresh(post)
+    context.user_data.pop("sched_data", None)
+    await query.edit_message_text(
+        "✅ تم حفظ المنشور المجدول.\n\n"
+        f"🆔 المعرف: {post.id}\n"
+        f"🕒 الموعد: {scheduled_at.strftime('%Y-%m-%d %H:%M')} UTC\n"
+        f"🔁 التكرار: {repeat_type}\n"
+        f"📡 القنوات المستهدفة: {len(post.channel_ids or [])}\n"
+        "⚙️ سيتم تحويله إلى مهمة خلفية عند حلول الموعد.",
+        reply_markup=scheduled_menu_keyboard(),
         parse_mode="Markdown"
     )
 

@@ -41,12 +41,24 @@ class DownloadService:
         return enqueue_job(DownloadService.job_type, payload, priority=10, max_attempts=3)
 
     @staticmethod
-    def enqueue_broadcast(*, text: str, target: str, broadcast_log_id: int, offset: int = 0) -> int:
+    def enqueue_broadcast(
+        *,
+        text: str,
+        target: str,
+        broadcast_log_id: int,
+        offset: int = 0,
+        scope: str = "all",
+        media_type: str | None = None,
+        media_file_id: str | None = None,
+    ) -> int:
         payload = {
             "text": text,
             "target": target,
             "broadcast_log_id": broadcast_log_id,
             "offset": offset,
+            "scope": scope,
+            "media_type": media_type,
+            "media_file_id": media_file_id,
         }
         return enqueue_job(DownloadService.broadcast_job_type, payload, priority=5, max_attempts=3)
 

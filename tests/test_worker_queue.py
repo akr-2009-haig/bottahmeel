@@ -157,6 +157,74 @@ class WorkerQueueTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(bot.send_message.await_count, 3)
 
+    async def test_broadcast_queue_supports_publish_channels(self):
+        db = self._session()
+        try:
+            channels = [
+                PublishChannel(chat_id=-1001, title="C1", is_active=True),
+                PublishChannel(chat_id=-1002, title="C2", is_active=True),
+            ]
+            db.add_all(channels)
+            log = BroadcastLog(text="hello channels", target_type="channels", total_sent=0, total_failed=0, sent_by=999)
+            db.add(log)
+            db.commit()
+            db.refresh(log)
+            log_id = log.id
+        finally:
+            db.close()
+
+        bot = AsyncMock()
+        result = await _process_broadcast(bot, {
+            "text": "hello channels",
+            "target": "channels",
+            "broadcast_log_id": log_id,
+            "offset": 0,
+            "scope": "active",
+        })
+
+        self.assertEqual(result["sent"], 2)
+        self.assertEqual(bot.send_message.await_count, 2)
+
+        follow_up_job = claim_next_job("broadcast-channel-worker", allowed_job_types=["broadcast_batch"])
+        self.assertIsNotNone(follow_up_job)
+        follow_up_result = await _process_job(bot, follow_up_job)
+        complete_job(follow_up_job.id, follow_up_result)
+
+        db = self._session()
+        try:
+            log = db.query(BroadcastLog).filter_by(id=log_id).first()
+            self.assertEqual(log.total_sent, 2)
+            self.assertEqual(log.status, "completed")
+        finally:
+            db.close()
+
+    async def test_broadcast_queue_supports_media_payloads(self):
+        db = self._session()
+        try:
+            user = User(telegram_id=2001, first_name="Media", status=UserStatus.ACTIVE)
+            db.add(user)
+            log = BroadcastLog(text="caption", target_type="users", total_sent=0, total_failed=0, sent_by=999)
+            db.add(log)
+            db.commit()
+            db.refresh(log)
+            log_id = log.id
+        finally:
+            db.close()
+
+        bot = AsyncMock()
+        result = await _process_broadcast(bot, {
+            "text": "caption",
+            "target": "users",
+            "broadcast_log_id": log_id,
+            "offset": 0,
+            "scope": "active",
+            "media_type": "photo",
+            "media_file_id": "photo-file-id",
+        })
+
+        self.assertEqual(result["sent"], 1)
+        bot.send_photo.assert_awaited_once_with(chat_id=2001, photo="photo-file-id", caption="caption")
+
     async def test_enqueue_due_scheduled_posts_dispatches_once_and_worker_completes_post(self):
         now = datetime.now(timezone.utc)
         db = self._session()
