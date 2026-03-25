@@ -273,7 +273,7 @@ def _seed_defaults():
             ("dailymotion_disabled_msg", "عذراً، Dailymotion غير مفعل حالياً."),
             ("disabled_platform_generic_msg", "عذراً، هذه المنصة غير مفعلة حالياً في البوت."),
             ("unsupported_platform_msg", "⚠️ هذه المنصة غير مدعومة حالياً. يرجى إرسال رابط من منصة مدعومة."),
-            ("rate_limit_message", "⚠️ الضغط مرتفع حالياً. يرجى الانتظار {seconds} ثانية قبل إرسال طلب جديد."),
+            ("rate_limit_message", "عذرا حدث خطاء ❌يرجى المحاولة لاحقا"),
             ("text_format", "none"),
         ]
         for key, value in default_settings:

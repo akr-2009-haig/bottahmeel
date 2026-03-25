@@ -1,10 +1,13 @@
 import logging
 import os
 import json
+from io import BytesIO
+from uuid import uuid4
 
 from telegram import CallbackQuery
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.ext import ContextTypes
+from PIL import Image
 
 from bot.database import SessionLocal, SubscriptionChannel, User, UserStatus, BotLanguage, get_setting
 from bot.locales import get_string
@@ -16,11 +19,12 @@ from bot.utils.button_engine import (
     get_reply_button_response,
 )
 from bot.utils.helpers import get_user_name
-from bot.utils.platforms import detect_platform, get_platform_info, is_any_url
+from bot.utils.platforms import detect_platform, extract_media_info, get_platform_info, is_any_url, is_instagram_profile_url
 
 logger = logging.getLogger(__name__)
 
 BOT_OWNER_ID = int(os.environ.get("BOT_OWNER_ID", "0"))
+PENDING_DOWNLOADS_KEY = "pending_downloads"
 
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
@@ -148,6 +152,243 @@ def build_subscription_keyboard(channels: list, lang: str) -> InlineKeyboardMark
 
     keyboard.append([InlineKeyboardButton(get_string("check_subscription", lang), callback_data="check_sub")])
     return InlineKeyboardMarkup(keyboard)
+
+
+def _format_duration(seconds: int | None) -> str:
+    if not seconds or seconds <= 0:
+        return "00:00"
+    minutes, secs = divmod(int(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+
+def _format_compact_number(value: int | None) -> str:
+    if not value:
+        return "0"
+    number = float(value)
+    if number >= 1_000_000_000:
+        return f"{number / 1_000_000_000:.1f}B".rstrip("0").rstrip(".")
+    if number >= 1_000_000:
+        return f"{number / 1_000_000:.1f}M".rstrip("0").rstrip(".")
+    if number >= 1_000:
+        return f"{number / 1_000:.1f}K".rstrip("0").rstrip(".")
+    return str(int(number))
+
+
+def _format_filesize(value: int | None) -> str:
+    if not value or value <= 0:
+        return ""
+    size = float(value)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return f"{size:.1f}{unit}".rstrip("0").rstrip(".")
+        size /= 1024
+    return ""
+
+
+async def _get_bot_signature(context: ContextTypes.DEFAULT_TYPE) -> str:
+    cache = getattr(context, "bot_data", None)
+    if isinstance(cache, dict) and cache.get("bot_signature"):
+        return cache["bot_signature"]
+    signature = ""
+    try:
+        me = await context.bot.get_me()
+        if getattr(me, "username", None):
+            signature = f"@{me.username}"
+    except Exception:
+        signature = ""
+    if not signature:
+        bot_name = get_setting("bot_name", "SaveEliteBot").strip() or "SaveEliteBot"
+        signature = bot_name if bot_name.startswith("@") else f"@{bot_name}"
+    if isinstance(cache, dict):
+        cache["bot_signature"] = signature
+    return signature
+
+
+def _pending_downloads(context: ContextTypes.DEFAULT_TYPE) -> dict:
+    return context.user_data.setdefault(PENDING_DOWNLOADS_KEY, {})
+
+
+def _store_pending_download(context: ContextTypes.DEFAULT_TYPE, payload: dict) -> str:
+    token = uuid4().hex[:8]
+    _pending_downloads(context)[token] = payload
+    return token
+
+
+def _youtube_keyboard(token: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎬 : مقطع فيديو", callback_data=f"ytdl:{token}:video")],
+        [
+            InlineKeyboardButton("🔊 : بصمة صوتية", callback_data=f"ytdl:{token}:fingerprint"),
+            InlineKeyboardButton("🎶 : ملف صوتي", callback_data=f"ytdl:{token}:audio"),
+        ],
+    ])
+
+
+def _instagram_profile_keyboard(token: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📸 : معلومات المستخدم", callback_data=f"igpf:{token}:info")],
+        [
+            InlineKeyboardButton("🔥 : الستوريات", callback_data=f"igpf:{token}:stories"),
+            InlineKeyboardButton("❄️ : الهايلات", callback_data=f"igpf:{token}:highlights"),
+        ],
+    ])
+
+
+def _youtube_preview_text(info: dict) -> str:
+    title = info.get("title") or "بدون عنوان"
+    channel = info.get("channel") or "غير معروف"
+    duration = _format_duration(info.get("duration"))
+    views = _format_compact_number(info.get("view_count"))
+    size = _format_filesize(info.get("filesize"))
+    stats_line = f"🕒 {duration} |  👁️ {views}"
+    if size:
+        stats_line = f"{stats_line} | 💾 {size}"
+    return (
+        f"🎥 {title}\n"
+        f"👤 {channel}\n"
+        f"{stats_line}\n\n"
+        "اختر صيغة التحميل المناسبة\n\n"
+        "🎬 : مقطع فيديو.\n"
+        "🔊 : بصمة صوتية.  🎶 : ملف صوتي."
+    )
+
+
+def _instagram_profile_text(info: dict) -> str:
+    username = info.get("username") or ""
+    return (
+        "➘ : نتيجة البحث 🔍.\n"
+        f"➘ : حساب المستخدم: {username}،\n"
+        "➘ : أختر ما تود تحميله:"
+    )
+
+
+def _instagram_user_info_caption(info: dict) -> str:
+    bio = info.get("bio") or "."
+    return (
+        "⌁︙معلومات المستخدم 📸.\n"
+        f"⌁︙حساب المستخدم: {info.get('username') or ''}،\n"
+        f"⌁︙اسم المستخدم: {info.get('display_name') or ''}،\n"
+        f"⌁︙عدد المنشورات: {info.get('post_count') or 0}،\n"
+        f"⌁︙عدد المتابعين: {info.get('followers') or 0}،\n"
+        f"⌁︙عدد الذين يتابعهم: {info.get('following') or 0}،\n"
+        "⌁︙البايو:\n"
+        f"{bio}"
+    )
+
+
+def _instagram_profile_photo() -> BytesIO:
+    image = Image.new("RGB", (512, 512), "white")
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    buffer.name = "instagram-profile.png"
+    buffer.seek(0)
+    return buffer
+
+
+def _collection_error_message(error_kind: str, *, collection: str) -> str:
+    if error_kind == "private":
+        return "عذرا لايمكنك الاطلاع"
+    if collection == "stories" and error_kind == "expired":
+        return "عذرا تم انتهاء صلاحية الستوري"
+    return "عذرا حدث خطاء ❌"
+
+
+async def _extract_instagram_collection(profile_url: str, collection: str) -> dict:
+    candidates = [profile_url]
+    username = profile_url.rstrip("/").rsplit("/", 1)[-1]
+    if collection == "stories" and username:
+        candidates.insert(0, f"https://www.instagram.com/stories/{username}/")
+    for candidate in candidates:
+        info = await extract_media_info(candidate, "instagram")
+        if info.get("ok") and info.get("entries"):
+            return info
+        if info.get("error") == "private":
+            return info
+    return {
+        "ok": False,
+        "error": "expired" if collection == "stories" else "generic",
+        "entries": [],
+    }
+
+
+async def _enqueue_download_request(
+    reply_target,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    user_id: int,
+    chat_id: int,
+    url: str,
+    platform: str,
+    lang: str,
+    download_mode: str = "default",
+    caption_override: str | None = None,
+):
+    wait_msg = await reply_target.reply_text(
+        get_lang_setting("downloading_message", lang, get_string("downloading", lang))
+    )
+    try:
+        job_id = DownloadService.enqueue_download(
+            user_id=user_id,
+            chat_id=chat_id,
+            url=url,
+            platform=platform,
+            lang=lang,
+            status_message_id=wait_msg.message_id,
+            download_mode=download_mode,
+            caption_override=caption_override,
+        )
+        logger.info("Queued download job %s for user=%s platform=%s mode=%s", job_id, user_id, platform, download_mode)
+        await wait_msg.edit_text(
+            get_lang_setting(
+                "queued_message",
+                lang,
+                (
+                    "📥 تم استلام طلبك ووضعه في قائمة المعالجة.\n"
+                    f"🆔 رقم الطلب: {job_id}\n"
+                    "⏳ سيتم تحديث هذه الرسالة عند بدء التنفيذ."
+                ),
+            )
+        )
+        return job_id
+    except Exception as exc:
+        logger.exception("Failed to enqueue download job: %s", exc)
+        await wait_msg.edit_text(get_lang_setting("error_message", lang, get_string("error", lang)))
+        return None
+
+
+async def _send_youtube_preview(update: Update, context: ContextTypes.DEFAULT_TYPE, *, url: str, lang: str) -> None:
+    info = await extract_media_info(url, "youtube")
+    if not info.get("ok"):
+        await update.message.reply_text("عذرا حدث خطاء ❌")
+        return
+    token = _store_pending_download(context, {
+        "platform": "youtube",
+        "url": url,
+        "caption_override": await _get_bot_signature(context),
+    })
+    text = _youtube_preview_text(info)
+    thumbnail = info.get("thumbnail")
+    if thumbnail:
+        await update.message.reply_photo(photo=thumbnail, caption=text, reply_markup=_youtube_keyboard(token))
+    else:
+        await update.message.reply_text(text, reply_markup=_youtube_keyboard(token))
+
+
+async def _send_instagram_profile_preview(update: Update, context: ContextTypes.DEFAULT_TYPE, *, url: str) -> None:
+    info = await extract_media_info(url, "instagram")
+    if not info.get("ok"):
+        await update.message.reply_text(_collection_error_message(info.get("error", "generic"), collection="highlights"))
+        return
+    token = _store_pending_download(context, {
+        "platform": "instagram_profile",
+        "url": url,
+        "info": info,
+        "caption_override": await _get_bot_signature(context),
+    })
+    await update.message.reply_text(_instagram_profile_text(info), reply_markup=_instagram_profile_keyboard(token))
 
 
 # ─── /start ───────────────────────────────────────────────────────────────────
@@ -293,6 +534,69 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data.startswith("btn_noop_"):
             return
 
+        if data.startswith("ytdl:"):
+            _, token, action = data.split(":", 2)
+            pending = _pending_downloads(context).get(token)
+            if not pending:
+                await query.message.reply_text("عذرا حدث خطاء ❌")
+                return
+            mode = "default"
+            if action == "audio":
+                mode = "audio"
+            elif action == "fingerprint":
+                mode = "fingerprint"
+            await _enqueue_download_request(
+                query.message,
+                context,
+                user_id=db_user.id,
+                chat_id=query.message.chat_id,
+                url=pending["url"],
+                platform="youtube",
+                lang=lang,
+                download_mode=mode,
+                caption_override=pending.get("caption_override"),
+            )
+            return
+
+        if data.startswith("igpf:"):
+            _, token, action = data.split(":", 2)
+            pending = _pending_downloads(context).get(token)
+            if not pending:
+                await query.message.reply_text("عذرا حدث خطاء ❌")
+                return
+            if action == "info":
+                await context.bot.send_photo(
+                    chat_id=query.message.chat_id,
+                    photo=_instagram_profile_photo(),
+                    caption=_instagram_user_info_caption(pending.get("info", {})),
+                )
+                return
+
+            collection_info = await _extract_instagram_collection(pending["url"], action)
+            if not collection_info.get("ok"):
+                await query.message.reply_text(
+                    _collection_error_message(collection_info.get("error", "generic"), collection=action)
+                )
+                return
+
+            entries = [entry for entry in collection_info.get("entries", []) if entry.get("url")]
+            if not entries:
+                await query.message.reply_text(_collection_error_message("expired", collection=action))
+                return
+
+            for entry in entries:
+                await _enqueue_download_request(
+                    query.message,
+                    context,
+                    user_id=db_user.id,
+                    chat_id=query.message.chat_id,
+                    url=entry["url"],
+                    platform="instagram",
+                    lang=lang,
+                    caption_override=pending.get("caption_override"),
+                )
+            return
+
         if data == "check_sub":
             is_subscribed, unsubscribed = await check_subscriptions(user.id, context.bot)
             if is_subscribed:
@@ -402,38 +706,39 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             rate_limit_message = get_lang_setting(
                 "rate_limit_message",
                 lang,
-                "⚠️ الضغط مرتفع حالياً. يرجى الانتظار {seconds} ثانية قبل إرسال طلب جديد.",
+                "عذرا حدث خطاء ❌يرجى المحاولة لاحقا",
             )
             await update.message.reply_text(rate_limit_message.replace("{seconds}", str(retry_after)))
             return
 
-        wait_msg = await update.message.reply_text(
-            get_lang_setting("downloading_message", lang, get_string("downloading", lang))
-        )
+        if platform == "youtube":
+            await _send_youtube_preview(update, context, url=detected_url, lang=lang)
+            return
 
-        try:
-            job_id = DownloadService.enqueue_download(
+        if platform == "instagram":
+            if is_instagram_profile_url(detected_url):
+                await _send_instagram_profile_preview(update, context, url=detected_url)
+                return
+            await _enqueue_download_request(
+                update.message,
+                context,
                 user_id=db_user.id,
                 chat_id=update.effective_chat.id,
                 url=detected_url,
                 platform=platform,
                 lang=lang,
-                status_message_id=wait_msg.message_id,
+                caption_override=await _get_bot_signature(context),
             )
-            logger.info("Queued download job %s for user=%s platform=%s", job_id, db_user.id, platform)
-            await wait_msg.edit_text(
-                get_lang_setting(
-                    "queued_message",
-                    lang,
-                    (
-                        "📥 تم استلام طلبك ووضعه في قائمة المعالجة.\n"
-                        f"🆔 رقم الطلب: {job_id}\n"
-                        "⏳ سيتم تحديث هذه الرسالة عند بدء التنفيذ."
-                    ),
-                )
-            )
-        except Exception as exc:
-            logger.exception("Failed to enqueue download job: %s", exc)
-            await wait_msg.edit_text(get_lang_setting("error_message", lang, get_string("error", lang)))
+            return
+
+        await _enqueue_download_request(
+            update.message,
+            context,
+            user_id=db_user.id,
+            chat_id=update.effective_chat.id,
+            url=detected_url,
+            platform=platform,
+            lang=lang,
+        )
     finally:
         db.close()

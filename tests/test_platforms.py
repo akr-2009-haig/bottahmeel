@@ -21,6 +21,12 @@ class PlatformSupportTests(unittest.TestCase):
                 self.assertEqual(detected_url, url)
                 self.assertEqual(detected_platform, platform)
 
+    def test_detect_platform_supports_instagram_profile_urls(self):
+        url = "https://www.instagram.com/film4.vibes/"
+        detected_url, detected_platform = detect_platform(f"profile {url}")
+        self.assertEqual(detected_url, url)
+        self.assertEqual(detected_platform, "instagram")
+
     def test_new_platforms_use_admin_toggle_keys(self):
         self.assertEqual(get_platform_info("reddit")["db_key"], "reddit_enabled")
         self.assertEqual(get_platform_info("google_drive")["db_key"], "google_drive_enabled")

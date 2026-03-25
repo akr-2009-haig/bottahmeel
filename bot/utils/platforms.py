@@ -6,7 +6,8 @@ import re
 import os
 import logging
 import asyncio
-from typing import Optional, Tuple, List
+from typing import Any, Optional, Tuple, List
+from urllib.parse import urlparse
 
 import yt_dlp
 
@@ -54,6 +55,7 @@ PLATFORMS = {
             r'https?://(www\.)?instagram\.com/reels/\S+',
             r'https?://(www\.)?instagram\.com/tv/\S+',
             r'https?://(www\.)?instagram\.com/stories/\S+',
+            r'https?://(www\.)?instagram\.com/(?!p/|reel/|reels/|tv/|stories/|explore/)[\w.]+/?(?:\?\S*)?$',
         ],
         "db_key": "instagram_enabled",
         "default_enabled": True,
@@ -232,14 +234,18 @@ PLATFORM_OPTS: dict = {
 }
 
 
-async def download_media(url: str, platform: str = "unknown") -> Tuple[Optional[str], str, str]:
+async def download_media(url: str, platform: str = "unknown", *, download_mode: str = "default") -> Tuple[Optional[str], str, str]:
     tmp_dir = create_temp_download_dir(platform)
     outtmpl = os.path.join(tmp_dir, '%(id)s.%(ext)s')
 
     opts = {**YDL_BASE_OPTS}
     opts.update(PLATFORM_OPTS.get(platform, {}))
     opts['outtmpl'] = outtmpl
-    if 'format' not in opts:
+    if download_mode == "audio":
+        opts['format'] = 'bestaudio[ext=m4a]/bestaudio/best'
+    elif download_mode == "fingerprint":
+        opts['format'] = 'bestaudio[ext=m4a]/bestaudio/best'
+    elif 'format' not in opts:
         opts['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
 
     loop = asyncio.get_event_loop()
@@ -264,15 +270,9 @@ async def download_media(url: str, platform: str = "unknown") -> Tuple[Optional[
                     return None, "video", title
 
             ext_lower = ext.lower()
-            if ext_lower in IMAGE_EXTS:
-                media_type = "photo"
-            elif ext_lower in AUDIO_EXTS:
-                media_type = "audio"
-            elif ext_lower in VIDEO_EXTS:
-                media_type = "video"
-            else:
+            media_type = _guess_media_type({"ext": ext_lower}, requested_mode=download_mode)
+            if media_type == "document":
                 logger.warning("[%s] Treating unknown extension '%s' as document for %s", platform, ext_lower, url)
-                media_type = "document"
 
             return filepath, media_type, title
 
@@ -281,6 +281,120 @@ async def download_media(url: str, platform: str = "unknown") -> Tuple[Optional[
     except Exception as e:
         logger.error(f"[{platform}] Download error: {e}")
         return None, "video", ""
+
+
+def is_instagram_profile_url(url: str) -> bool:
+    parsed = urlparse(url)
+    path = parsed.path.strip("/")
+    if not path:
+        return False
+    parts = path.split("/")
+    if len(parts) != 1:
+        return False
+    if parts[0].lower() in {"p", "reel", "reels", "tv", "stories", "explore"}:
+        return False
+    return bool(re.fullmatch(r"[\w.]+", parts[0]))
+
+
+def classify_extraction_error(exc: Exception) -> str:
+    message = str(exc).lower()
+    if any(marker in message for marker in ("private", "login required", "sign in", "not authorized", "forbidden")):
+        return "private"
+    if any(marker in message for marker in ("story unavailable", "story has expired", "expired", "no longer available")):
+        return "expired"
+    return "generic"
+
+
+def _guess_media_type(info: dict[str, Any], *, requested_mode: str = "default") -> str:
+    ext = str(info.get("ext") or "").lower()
+    if requested_mode == "fingerprint" and ext in AUDIO_EXTS:
+        return "voice"
+    if ext in IMAGE_EXTS:
+        return "photo"
+    if ext in AUDIO_EXTS:
+        return "audio"
+    if ext in VIDEO_EXTS:
+        return "video"
+    return "document"
+
+
+def _normalize_entries(entries: Any, *, requested_mode: str = "default") -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    if not entries:
+        return normalized
+    for entry in list(entries):
+        if not isinstance(entry, dict):
+            continue
+        normalized.append({
+            "url": entry.get("webpage_url") or entry.get("original_url") or entry.get("url"),
+            "title": entry.get("title") or "",
+            "thumbnail": entry.get("thumbnail") or "",
+            "media_type": _guess_media_type(entry, requested_mode=requested_mode),
+        })
+    return normalized
+
+
+async def extract_media_info(url: str, platform: str = "unknown", *, requested_mode: str = "default") -> dict[str, Any]:
+    opts = {**YDL_BASE_OPTS}
+    opts.update(PLATFORM_OPTS.get(platform, {}))
+    opts.update({
+        "skip_download": True,
+        "quiet": True,
+        "noplaylist": False,
+    })
+    if requested_mode == "audio":
+        opts["format"] = "bestaudio[ext=m4a]/bestaudio/best"
+    elif requested_mode == "fingerprint":
+        opts["format"] = "bestaudio[ext=m4a]/bestaudio/best"
+
+    loop = asyncio.get_event_loop()
+
+    def _extract() -> dict[str, Any]:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            return info or {}
+
+    try:
+        info = await loop.run_in_executor(None, _extract)
+    except Exception as exc:
+        logger.warning("[%s] Metadata extraction failed for %s: %s", platform, url, exc)
+        return {
+            "ok": False,
+            "error": classify_extraction_error(exc),
+            "url": url,
+            "platform": platform,
+        }
+
+    uploader = info.get("channel") or info.get("uploader") or info.get("creator") or ""
+    parsed = urlparse(url)
+    path_parts = [part for part in parsed.path.split("/") if part]
+    username_hint = path_parts[0] if path_parts else ""
+    display_name = info.get("uploader") or info.get("channel") or info.get("fulltitle") or ""
+    view_count = info.get("view_count") or info.get("channel_follower_count") or 0
+    entries = _normalize_entries(info.get("entries"), requested_mode=requested_mode)
+    post_count = info.get("playlist_count") or info.get("media_count") or len(entries)
+
+    return {
+        "ok": True,
+        "url": url,
+        "platform": platform,
+        "title": info.get("title") or info.get("playlist_title") or "",
+        "thumbnail": info.get("thumbnail") or "",
+        "duration": info.get("duration") or 0,
+        "view_count": view_count,
+        "filesize": info.get("filesize") or info.get("filesize_approx") or 0,
+        "channel": uploader,
+        "username": info.get("uploader_id") or username_hint,
+        "display_name": display_name,
+        "bio": info.get("description") or "",
+        "post_count": post_count or 0,
+        "followers": info.get("channel_follower_count") or info.get("follower_count") or 0,
+        "following": info.get("following_count") or 0,
+        "entries": entries,
+        "media_type": _guess_media_type(info, requested_mode=requested_mode),
+        "raw_id": info.get("id") or "",
+        "is_instagram_profile": platform == "instagram" and is_instagram_profile_url(url),
+    }
 
 
 def get_platform_info(platform_key: str) -> dict:
