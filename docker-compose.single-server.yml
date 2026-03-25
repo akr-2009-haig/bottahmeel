@@ -1,0 +1,142 @@
+# docker-compose.single-server.yml
+#
+# Production Docker Compose for a single Hostinger KVM 8 server.
+# Resources: 8 vCPU · 32 GB RAM · 400 GB NVMe · Ubuntu 24.04 LTS
+#
+# Services
+# --------
+#  bot      – Telegram webhook receiver (port 8080, internal only – fronted by Nginx)
+#  worker   – Background job processor  (2 replicas by default; see note below)
+#  db       – PostgreSQL 16             (data persisted to named volume)
+#  redis    – Redis 7                   (data persisted to named volume)
+#
+# Worker replica count
+# --------------------
+# The project processes downloads as DB-backed BackgroundJobs consumed by worker
+# processes.  On KVM 8 (8 vCPU / 32 GB RAM) two workers with WORKER_CONCURRENCY=4
+# each gives 8 concurrent download slots – a reasonable baseline.  Raise replicas
+# or WORKER_CONCURRENCY if CPU/RAM head-room permits and queue depth grows.
+#
+# Usage
+# -----
+#   cp deploy/.env.single-server.example .env.production
+#   # edit .env.production
+#   docker compose -f docker-compose.single-server.yml --env-file .env.production up -d
+
+services:
+
+  # ── Bot webhook receiver ─────────────────────────────────────────────────────
+  bot:
+    build: .
+    command: python run_bot.py
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      # Port 8080: webhook endpoint (Nginx proxies to this)
+      - "127.0.0.1:8080:8080"
+      # Port 8081: health / readiness / queue-stats endpoints (internal only)
+      - "127.0.0.1:8081:8081"
+    volumes:
+      - bot_temp:/tmp/karar-bot
+    healthcheck:
+      test: ["CMD", "python", "scripts/healthcheck.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ── Background workers ───────────────────────────────────────────────────────
+  # Two worker replicas are started by default.
+  # Scale up with: docker compose ... up -d --scale worker=4
+  worker:
+    build: .
+    command: python run_bot.py worker
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - bot_temp:/tmp/karar-bot
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ── PostgreSQL ────────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-karar_bot}
+      POSTGRES_USER: ${POSTGRES_USER:-karar}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # Do NOT expose PostgreSQL to the host network in production.
+    # The bot and workers connect via the internal Docker network.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-karar} -d ${POSTGRES_DB:-karar_bot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  # ── Redis ─────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: >
+      redis-server
+      --save 60 1
+      --loglevel warning
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    # Internal only – not exposed to host.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  bot_temp:
+    driver: local
