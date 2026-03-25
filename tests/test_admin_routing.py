@@ -66,6 +66,26 @@ class AdminRoutingTests(unittest.IsolatedAsyncioTestCase):
         message_handler.assert_not_awaited()
         db.close.assert_called_once()
 
+    async def test_combined_message_routes_admin_media_waiting_messages_to_admin_handler(self):
+        update = SimpleNamespace(
+            message=SimpleNamespace(text=None, photo=[SimpleNamespace(file_id="photo-file")]),
+            effective_user=SimpleNamespace(id=1),
+        )
+        context = SimpleNamespace(user_data={"waiting_for": "bc_media_photo_users"})
+        db = MagicMock()
+
+        with (
+            patch.object(bootstrap, "SessionLocal", return_value=db),
+            patch.object(bootstrap, "is_admin", return_value=True),
+            patch.object(bootstrap, "admin_message_handler", new=AsyncMock()) as admin_message_handler,
+            patch.object(bootstrap, "message_handler", new=AsyncMock()) as message_handler,
+        ):
+            await bootstrap.combined_message_handler(update, context)
+
+        admin_message_handler.assert_awaited_once_with(update, context)
+        message_handler.assert_not_awaited()
+        db.close.assert_called_once()
+
     async def test_admin_callback_opens_sub3_subscription_screen_from_main_menu(self):
         query = SimpleNamespace(
             data="adm_sub",
@@ -87,6 +107,66 @@ class AdminRoutingTests(unittest.IsolatedAsyncioTestCase):
             await admin_handler.admin_callback(update, context)
 
         sub3_main.assert_awaited_once_with(query, context)
+        db.close.assert_called_once()
+
+    async def test_admin_callback_perms_save_creates_new_admin(self):
+        query = SimpleNamespace(
+            data="perms_save",
+            from_user=SimpleNamespace(id=1),
+            answer=AsyncMock(),
+            edit_message_text=AsyncMock(),
+        )
+        update = SimpleNamespace(callback_query=query)
+        context = SimpleNamespace(user_data={"new_admin_id": 42, "selected_perms": ["manage_users"]})
+        db = MagicMock()
+
+        with (
+            patch.object(admin_handler, "SessionLocal", return_value=db),
+            patch.object(admin_handler, "is_admin", return_value=True),
+            patch.object(admin_handler, "dispatch_ui_callback", new=AsyncMock(return_value=False)),
+            patch.object(admin_handler, "dispatch_sub_callback", new=AsyncMock(return_value=False)),
+        ):
+            await admin_handler.admin_callback(update, context)
+
+        self.assertEqual(db.add.call_count, 1)
+        created_admin = db.add.call_args.args[0]
+        self.assertEqual(created_admin.telegram_id, 42)
+        self.assertEqual(created_admin.permissions, ["manage_users"])
+        self.assertEqual(query.answer.await_count, 2)
+        self.assertNotIn("new_admin_id", context.user_data)
+        db.close.assert_called_once()
+
+    async def test_admin_callback_sched_repeat_creates_post_with_selected_repeat_type(self):
+        query = SimpleNamespace(
+            data="sched_repeat_daily",
+            from_user=SimpleNamespace(id=7),
+            answer=AsyncMock(),
+            edit_message_text=AsyncMock(),
+        )
+        update = SimpleNamespace(callback_query=query)
+        context = SimpleNamespace(user_data={
+            "sched_data": {
+                "text": "hello",
+                "channel_ids": [1, 2],
+                "scheduled_at": "2026-03-26T12:30:00+00:00",
+            }
+        })
+        db = MagicMock()
+
+        with (
+            patch.object(admin_handler, "SessionLocal", return_value=db),
+            patch.object(admin_handler, "is_admin", return_value=True),
+            patch.object(admin_handler, "dispatch_ui_callback", new=AsyncMock(return_value=False)),
+            patch.object(admin_handler, "dispatch_sub_callback", new=AsyncMock(return_value=False)),
+        ):
+            await admin_handler.admin_callback(update, context)
+
+        self.assertEqual(db.add.call_count, 1)
+        post = db.add.call_args.args[0]
+        self.assertEqual(post.repeat_type, "daily")
+        self.assertEqual(post.created_by, 7)
+        self.assertNotIn("sched_data", context.user_data)
+        query.edit_message_text.assert_awaited_once()
         db.close.assert_called_once()
 
 

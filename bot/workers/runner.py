@@ -214,6 +214,9 @@ async def _process_broadcast(bot: Bot, payload: dict) -> dict:
     target = payload["target"]
     log_id = int(payload["broadcast_log_id"])
     offset = int(payload.get("offset", 0))
+    scope = (payload.get("scope") or "all").strip().lower()
+    media_type = payload.get("media_type")
+    media_file_id = payload.get("media_file_id")
     settings = load_settings()
     db = SessionLocal()
     sent = 0
@@ -225,24 +228,48 @@ async def _process_broadcast(bot: Bot, payload: dict) -> dict:
             log.status = "processing"
             log.error_message = None
             db.commit()
-        if target != "users":
-            raise RuntimeError(f"Unsupported broadcast target: {target}")
         antiflood = db.query(AntiFloodSettings).first()
         delay_between_messages = antiflood.delay_between_messages if antiflood else 1.0
         messages_per_minute = antiflood.messages_per_minute if antiflood else 20
         if messages_per_minute and messages_per_minute > 0:
             delay_between_messages = max(delay_between_messages, 60.0 / messages_per_minute)
-        users = (
-            db.query(User)
-            .filter_by(status=UserStatus.ACTIVE)
-            .order_by(User.id)
-            .offset(offset)
-            .limit(settings.worker_batch_size)
-            .all()
-        )
-        for user in users:
+        if target == "users":
+            recipients = db.query(User)
+            if scope == "active":
+                recipients = recipients.filter_by(status=UserStatus.ACTIVE)
+            else:
+                recipients = recipients.filter(User.status != UserStatus.BANNED)
+            recipients = (
+                recipients
+                .order_by(User.id)
+                .offset(offset)
+                .limit(settings.worker_batch_size)
+                .all()
+            )
+        elif target == "channels":
+            recipients = db.query(PublishChannel)
+            if scope == "active":
+                recipients = recipients.filter_by(is_active=True)
+            recipients = (
+                recipients
+                .order_by(PublishChannel.id)
+                .offset(offset)
+                .limit(settings.worker_batch_size)
+                .all()
+            )
+        else:
+            raise RuntimeError(f"Unsupported broadcast target: {target}")
+        for recipient in recipients:
             try:
-                await bot.send_message(chat_id=user.telegram_id, text=text)
+                chat_id = recipient.telegram_id if target == "users" else recipient.chat_id
+                if media_type == "photo" and media_file_id:
+                    await bot.send_photo(chat_id=chat_id, photo=media_file_id, caption=text or None)
+                elif media_type == "video" and media_file_id:
+                    await bot.send_video(chat_id=chat_id, video=media_file_id, caption=text or None, supports_streaming=True)
+                elif media_type == "document" and media_file_id:
+                    await bot.send_document(chat_id=chat_id, document=media_file_id, caption=text or None)
+                else:
+                    await bot.send_message(chat_id=chat_id, text=text)
                 sent += 1
             except Exception:
                 failed += 1
@@ -251,17 +278,20 @@ async def _process_broadcast(bot: Bot, payload: dict) -> dict:
         if log:
             log.total_sent += sent
             log.total_failed += failed
-            if len(users) < settings.worker_batch_size:
+            if len(recipients) < settings.worker_batch_size:
                 log.finished_at = datetime.now(timezone.utc)
                 log.status = "completed"
                 log.last_job_id = None
         db.commit()
-        if len(users) == settings.worker_batch_size:
+        if len(recipients) == settings.worker_batch_size:
             next_job_id = DownloadService.enqueue_broadcast(
                 text=text,
                 target=target,
                 broadcast_log_id=log_id,
                 offset=offset + settings.worker_batch_size,
+                scope=scope,
+                media_type=media_type,
+                media_file_id=media_file_id,
             )
             if log:
                 log.last_job_id = next_job_id

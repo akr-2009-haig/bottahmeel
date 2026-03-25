@@ -37,7 +37,9 @@ ADMIN_CB_PREFIXES = [
 
 ADMIN_WAIT_PREFIXES = [
     "add_admin_id", "add_sub_entity", "add_pub_entity", "create_group_name",
+    "search_group", "rename_group", "group_add_entity",
     "search_user", "get_user_info", "edit_setting_", "bc_text_",
+    "bc_media_",
     "send_to_user_id", "send_to_user_text", "af_speed_custom",
     "af_delay_custom", "af_retry_custom", "search_admin", "ad_title", "ad_text",
     "ui_msg_text_", "ui_btn_label", "ui_btn_data_", "ui_btn_data_reply",
@@ -63,7 +65,7 @@ async def combined_callback_handler(update: Update, context):
 
 
 async def combined_message_handler(update: Update, context):
-    if not update.message or not update.message.text:
+    if not update.message:
         return
     db = SessionLocal()
     try:
@@ -73,6 +75,8 @@ async def combined_message_handler(update: Update, context):
     waiting = context.user_data.get("waiting_for", "")
     if is_adm and waiting and any(waiting.startswith(prefix) for prefix in ADMIN_WAIT_PREFIXES):
         await admin_message_handler(update, context)
+        return
+    if not update.message.text:
         return
     await message_handler(update, context)
 
@@ -113,4 +117,5 @@ def bootstrap_application() -> Application:
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CallbackQueryHandler(combined_callback_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, combined_message_handler))
+    app.add_handler(MessageHandler((filters.PHOTO | filters.VIDEO | filters.Document.ALL) & ~filters.COMMAND, combined_message_handler))
     return app
