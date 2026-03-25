@@ -152,7 +152,7 @@ class UserFlowTests(unittest.IsolatedAsyncioTestCase):
             download_mode="audio",
             caption_override="@UnitBot",
         )
-        wait_msg.edit_text.assert_awaited_once()
+        wait_msg.edit_text.assert_not_awaited()
         db.close.assert_called_once()
 
     async def test_callback_handler_sends_instagram_profile_card(self):
