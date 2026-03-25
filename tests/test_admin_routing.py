@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -148,7 +149,7 @@ class AdminRoutingTests(unittest.IsolatedAsyncioTestCase):
             "sched_data": {
                 "text": "hello",
                 "channel_ids": [1, 2],
-                "scheduled_at": "2026-03-26T12:30:00+00:00",
+                "scheduled_at": datetime(2026, 3, 26, 12, 30, tzinfo=timezone.utc),
             }
         })
         db = MagicMock()

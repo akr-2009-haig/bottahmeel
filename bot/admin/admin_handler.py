@@ -147,6 +147,16 @@ def _broadcast_media_label(media_type: str | None) -> str:
     }.get(media_type, "📣 إذاعة")
 
 
+def _broadcast_media_from_waiting(waiting: str) -> tuple[str | None, str | None]:
+    if waiting.startswith("bc_media_photo_"):
+        return "photo", waiting.replace("bc_media_photo_", "")
+    if waiting.startswith("bc_media_video_"):
+        return "video", waiting.replace("bc_media_video_", "")
+    if waiting.startswith("bc_media_document_"):
+        return "document", waiting.replace("bc_media_document_", "")
+    return None, None
+
+
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     db = SessionLocal()
@@ -1428,7 +1438,7 @@ async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
             return
 
         if waiting.startswith("bc_media_"):
-            media_type = waiting.split("_")[2]
+            media_type, target = _broadcast_media_from_waiting(waiting)
             file_id = None
             if media_type == "photo" and update.message.photo:
                 file_id = update.message.photo[-1].file_id
@@ -1436,14 +1446,13 @@ async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 file_id = update.message.video.file_id
             elif media_type == "document" and update.message.document:
                 file_id = update.message.document.file_id
-            if not file_id:
+            if not file_id or not target:
                 await update.message.reply_text("❌ أرسل نوع الوسائط المطلوب فقط.")
                 return
             context.user_data["bc_media_type"] = media_type
             context.user_data["bc_media_file_id"] = file_id
             if update.message.caption and not context.user_data.get("bc_text"):
                 context.user_data["bc_text"] = update.message.caption.strip()
-            target = waiting.split("_")[-1]
             context.user_data["waiting_for"] = None
             await update.message.reply_text(
                 "✅ تم حفظ وسائط الإذاعة.\n\n"
@@ -1594,7 +1603,6 @@ async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
             return
 
         elif waiting == "rename_group":
-            new_name = ""
             try:
                 group_id_raw, new_name = [part.strip() for part in text.split("|", 1)]
                 group = db.query(ChannelGroup).filter_by(id=int(group_id_raw)).first()
@@ -1795,7 +1803,7 @@ async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 await update.message.reply_text("❌ يجب أن يكون وقت النشر في المستقبل.")
                 return
 
-            sched_data["scheduled_at"] = scheduled_at.isoformat()
+            sched_data["scheduled_at"] = scheduled_at
             context.user_data["sched_data"] = sched_data
             context.user_data["waiting_for"] = None
             await update.message.reply_text(
@@ -2579,8 +2587,8 @@ async def _do_broadcast(query, context, db, target: str):
 
 async def _create_scheduled_post(query, context, db, created_by: int, repeat_type: str):
     sched_data = context.user_data.get("sched_data") or {}
-    scheduled_at_raw = sched_data.get("scheduled_at")
-    if not scheduled_at_raw:
+    scheduled_at = sched_data.get("scheduled_at")
+    if not scheduled_at:
         await query.answer("❌ انتهت جلسة إنشاء المنشور. أعد المحاولة.", show_alert=True)
         await query.edit_message_text(
             "🗓 **النشر المجدول**\n\nاختر الإجراء:",
@@ -2588,7 +2596,15 @@ async def _create_scheduled_post(query, context, db, created_by: int, repeat_typ
             parse_mode="Markdown"
         )
         return
-    scheduled_at = datetime.fromisoformat(scheduled_at_raw)
+    if not isinstance(scheduled_at, datetime):
+        context.user_data.pop("sched_data", None)
+        await query.answer("❌ وقت الجدولة غير صالح. أعد إنشاء المنشور.", show_alert=True)
+        await query.edit_message_text(
+            "🗓 **النشر المجدول**\n\nاختر الإجراء:",
+            reply_markup=scheduled_menu_keyboard(),
+            parse_mode="Markdown"
+        )
+        return
     post = ScheduledPost(
         text=sched_data.get("text"),
         channel_ids=sched_data.get("channel_ids") or [],

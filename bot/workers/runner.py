@@ -215,6 +215,8 @@ async def _process_broadcast(bot: Bot, payload: dict) -> dict:
     log_id = int(payload["broadcast_log_id"])
     offset = int(payload.get("offset", 0))
     scope = (payload.get("scope") or "all").strip().lower()
+    if scope not in {"all", "active"}:
+        raise RuntimeError(f"Unsupported broadcast scope: {scope}")
     media_type = payload.get("media_type")
     media_file_id = payload.get("media_file_id")
     settings = load_settings()
