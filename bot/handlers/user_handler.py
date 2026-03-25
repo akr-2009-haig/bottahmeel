@@ -341,17 +341,6 @@ async def _enqueue_download_request(
             caption_override=caption_override,
         )
         logger.info("Queued download job %s for user=%s platform=%s mode=%s", job_id, user_id, platform, download_mode)
-        await wait_msg.edit_text(
-            get_lang_setting(
-                "queued_message",
-                lang,
-                (
-                    "📥 تم استلام طلبك ووضعه في قائمة المعالجة.\n"
-                    f"🆔 رقم الطلب: {job_id}\n"
-                    "⏳ سيتم تحديث هذه الرسالة عند بدء التنفيذ."
-                ),
-            )
-        )
         return job_id
     except Exception as exc:
         logger.exception("Failed to enqueue download job: %s", exc)
