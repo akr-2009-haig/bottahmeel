@@ -45,6 +45,7 @@ from .keyboards import (
     add_sub_type_keyboard, broadcast_compose_keyboard, repeat_type_keyboard,
     auto_delete_keyboard, admin_perms_keyboard
 )
+from .sub_handler import dispatch_sub_callback, sub3_handle_message, sub3_main
 from .ui_handler import dispatch_ui_callback, ui_handle_message
 
 logger = logging.getLogger(__name__)
@@ -170,6 +171,10 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if handled:
                 return
 
+        handled = await dispatch_sub_callback(query, context)
+        if handled:
+            return
+
         if data == "adm_main":
             await query.edit_message_text(
                 "🎛 **لوحة تحكم الإدارة**\n\nاختر القسم:",
@@ -192,11 +197,7 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         elif data == "adm_sub":
-            await query.edit_message_text(
-                "📢 **إدارة الاشتراك الإجباري**\n\nاختر الإجراء:",
-                reply_markup=subscription_menu_keyboard(),
-                parse_mode="Markdown"
-            )
+            await sub3_main(query, context)
 
         elif data == "adm_publish":
             await query.edit_message_text(
@@ -312,6 +313,10 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=back_keyboard("adm_users"),
                 parse_mode="Markdown"
             )
+
+        elif data.startswith("user_info_"):
+            user_id = int(data.split("_")[-1])
+            await _handle_user_details(query, db, user_id)
 
         elif data.startswith("ban_user_"):
             uid = int(data.split("_")[-1])
@@ -1275,6 +1280,11 @@ async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
             if handled:
                 return
 
+        if waiting.startswith("sub3_"):
+            handled = await sub3_handle_message(update, context)
+            if handled:
+                return
+
         if waiting == "add_admin_id":
             try:
                 admin_tg_id = int(text)
@@ -1707,6 +1717,49 @@ async def _handle_banned_users(query, db, page: int):
     buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data="adm_users")])
 
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
+
+
+async def _handle_user_details(query, db, user_id: int):
+    user = db.query(User).filter_by(id=user_id).first()
+    if not user:
+        await query.answer("❌ المستخدم غير موجود", show_alert=True)
+        return
+
+    status_emoji = {
+        UserStatus.ACTIVE: "✅",
+        UserStatus.BANNED: "🚫",
+        UserStatus.INACTIVE: "⚪",
+    }
+    status_icon = status_emoji.get(user.status, "❓")
+    name = f"{user.first_name or ''} {user.last_name or ''}".strip() or user.username or str(user.telegram_id)
+    buttons = [
+        [
+            InlineKeyboardButton("🚫 حظر", callback_data=f"ban_user_{user.id}"),
+            InlineKeyboardButton("🗑 حذف", callback_data=f"delete_user_{user.id}"),
+        ]
+    ]
+    if user.status == UserStatus.BANNED:
+        buttons.append([InlineKeyboardButton("✅ إلغاء الحظر", callback_data=f"unban_user_{user.id}")])
+    buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data="adm_users")])
+
+    await query.edit_message_text(
+        (
+            f"👤 **معلومات المستخدم**\n\n"
+            f"🆔 Telegram ID: `{user.telegram_id}`\n"
+            f"👤 الاسم: {name}\n"
+            f"📛 Username: @{user.username or 'لا يوجد'}\n"
+            f"🌍 اللغة: {user.language_code}\n"
+            f"📊 الحالة: {status_icon} {user.status.value}\n"
+            f"📥 إجمالي التحميلات: {user.download_count}\n"
+            f"🎵 TikTok: {user.tiktok_count}\n"
+            f"📺 YouTube: {user.youtube_count}\n"
+            f"📷 Instagram: {user.instagram_count}\n"
+            f"❤️ Likee: {user.likee_count}\n"
+            f"📅 تاريخ الانضمام: {user.joined_at.strftime('%Y-%m-%d') if user.joined_at else 'غير معروف'}"
+        ),
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode="Markdown",
+    )
 
 
 async def _handle_admins_list(query, db, page: int):
