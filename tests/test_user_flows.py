@@ -18,6 +18,41 @@ def _db_with_user(db_user):
 
 
 class UserFlowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_message_handler_blocks_platforms_disabled_by_default_without_admin_override(self):
+        db_user = SimpleNamespace(id=10, status=user_handler.UserStatus.ACTIVE, language_code="ar", is_admin=False)
+        db = _db_with_user(db_user)
+        message = SimpleNamespace(
+            text="https://www.reddit.com/r/python/comments/abc123/example_post/",
+            reply_photo=AsyncMock(),
+            reply_text=AsyncMock(),
+        )
+        update = SimpleNamespace(
+            message=message,
+            effective_user=SimpleNamespace(id=98, username="tester", first_name="Test", last_name="", language_code="ar"),
+            effective_chat=SimpleNamespace(id=499),
+        )
+        context = SimpleNamespace(
+            bot=SimpleNamespace(get_me=AsyncMock(return_value=SimpleNamespace(username="UnitBot"))),
+            user_data={},
+            bot_data={},
+        )
+
+        with (
+            patch.object(user_handler, "SessionLocal", return_value=db),
+            patch.object(user_handler, "get_setting", side_effect=_settings_side_effect({
+                "subscription_enabled": "false",
+            })),
+            patch.object(user_handler, "get_reply_button_response", return_value=None),
+            patch.object(user_handler, "check_download_rate_limit", return_value=(True, 0)) as rate_limit,
+            patch.object(user_handler.DownloadService, "enqueue_download") as enqueue_download,
+        ):
+            await user_handler.message_handler(update, context)
+
+        message.reply_text.assert_awaited_once_with("عذراً، Reddit غير مفعل حالياً في البوت.")
+        enqueue_download.assert_not_called()
+        rate_limit.assert_not_called()
+        db.close.assert_called_once()
+
     async def test_message_handler_shows_youtube_preview_with_expected_buttons(self):
         db_user = SimpleNamespace(id=11, status=user_handler.UserStatus.ACTIVE, language_code="ar", is_admin=False)
         db = _db_with_user(db_user)
@@ -67,6 +102,51 @@ class UserFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["reply_markup"].inline_keyboard[1][0].text, "🔊 : بصمة صوتية")
         self.assertEqual(kwargs["reply_markup"].inline_keyboard[1][1].text, "🎶 : ملف صوتي")
         self.assertEqual(len(context.user_data["pending_downloads"]), 1)
+        db.close.assert_called_once()
+
+    async def test_message_handler_enqueues_default_enabled_platform_without_admin_override(self):
+        db_user = SimpleNamespace(id=15, status=user_handler.UserStatus.ACTIVE, language_code="ar", is_admin=False)
+        db = _db_with_user(db_user)
+        wait_msg = SimpleNamespace(message_id=88, edit_text=AsyncMock())
+        message = SimpleNamespace(
+            text="https://www.tiktok.com/@tester/video/1234567890",
+            reply_photo=AsyncMock(),
+            reply_text=AsyncMock(return_value=wait_msg),
+        )
+        update = SimpleNamespace(
+            message=message,
+            effective_user=SimpleNamespace(id=56, username="tester", first_name="Test", last_name="", language_code="ar"),
+            effective_chat=SimpleNamespace(id=601),
+        )
+        context = SimpleNamespace(
+            bot=SimpleNamespace(get_me=AsyncMock(return_value=SimpleNamespace(username="UnitBot"))),
+            user_data={},
+            bot_data={},
+        )
+
+        with (
+            patch.object(user_handler, "SessionLocal", return_value=db),
+            patch.object(user_handler, "get_setting", side_effect=_settings_side_effect({
+                "subscription_enabled": "false",
+                "downloading_message": "جارٍ التحميل",
+            })),
+            patch.object(user_handler, "get_reply_button_response", return_value=None),
+            patch.object(user_handler, "check_download_rate_limit", return_value=(True, 0)),
+            patch.object(user_handler.DownloadService, "enqueue_download", return_value=654) as enqueue_download,
+        ):
+            await user_handler.message_handler(update, context)
+
+        message.reply_text.assert_awaited_once_with("جارٍ التحميل")
+        enqueue_download.assert_called_once_with(
+            user_id=15,
+            chat_id=601,
+            url="https://www.tiktok.com/@tester/video/1234567890",
+            platform="tiktok",
+            lang="ar",
+            status_message_id=88,
+            download_mode="default",
+            caption_override=None,
+        )
         db.close.assert_called_once()
 
     async def test_message_handler_shows_instagram_profile_menu(self):
