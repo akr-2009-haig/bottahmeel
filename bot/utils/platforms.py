@@ -231,6 +231,18 @@ PLATFORM_OPTS: dict = {
     "linkedin": {
         'format': 'best[ext=mp4]/best',
     },
+    "likee": {
+        'format': 'best[ext=mp4]/best',
+    },
+    "snapchat": {
+        'format': 'best[ext=mp4]/best',
+    },
+    "vimeo": {
+        'format': 'best[ext=mp4]/best',
+    },
+    "dailymotion": {
+        'format': 'best[ext=mp4]/best',
+    },
 }
 
 
