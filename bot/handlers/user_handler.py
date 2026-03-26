@@ -682,7 +682,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         platform_name = platform_info.get("name", platform.title())
         enabled_key = platform_info.get("db_key", f"{platform}_enabled")
 
-        if get_setting(enabled_key, "true") != "true":
+        default_enabled = "true" if platform_info.get("default_enabled", False) else "false"
+        if get_setting(enabled_key, default_enabled) != "true":
             disabled_msg = get_lang_setting(
                 f"{platform}_disabled_msg", lang,
                 get_setting("disabled_platform_generic_msg", f"عذراً، {platform_name} غير مفعل حالياً في البوت.")
