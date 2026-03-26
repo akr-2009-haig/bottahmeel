@@ -1,6 +1,6 @@
 import unittest
 
-from bot.utils.platforms import PLATFORMS, all_platforms, detect_platform, get_platform_info
+from bot.utils.platforms import PLATFORM_OPTS, PLATFORMS, all_platforms, detect_platform, get_platform_info
 
 
 class PlatformSupportTests(unittest.TestCase):
@@ -33,3 +33,7 @@ class PlatformSupportTests(unittest.TestCase):
         self.assertEqual(get_platform_info("linkedin")["db_key"], "linkedin_enabled")
         self.assertFalse(PLATFORMS["google_drive"]["default_enabled"])
         self.assertFalse(PLATFORMS["linkedin"]["default_enabled"])
+
+    def test_all_registered_platforms_have_explicit_download_formats(self):
+        missing = sorted(platform for platform in all_platforms() if platform not in PLATFORM_OPTS)
+        self.assertEqual(missing, [])
