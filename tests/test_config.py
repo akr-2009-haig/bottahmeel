@@ -12,16 +12,40 @@ class SettingsTests(unittest.TestCase):
     def tearDown(self):
         load_settings.cache_clear()
 
-    def test_webhook_requires_webhook_url(self):
+    def test_webhook_requires_webhook_url_or_full_url(self):
         with patch.dict(os.environ, {
             "BOT_MODE": RuntimeMode.WEBHOOK.value,
             "TELEGRAM_BOT_TOKEN": "token",
             "DATABASE_URL": "sqlite:///test.db",
             "WEBHOOK_URL": "",
+            "WEBHOOK_FULL_URL": "",
         }, clear=False):
             settings = load_settings()
             with self.assertRaises(EnvironmentError):
                 settings.validate_for_mode()
+
+    def test_webhook_allows_full_url_without_base_url(self):
+        with patch.dict(os.environ, {
+            "BOT_MODE": RuntimeMode.WEBHOOK.value,
+            "TELEGRAM_BOT_TOKEN": "token",
+            "DATABASE_URL": "sqlite:///test.db",
+            "WEBHOOK_URL": "",
+            "WEBHOOK_FULL_URL": "https://example.com/telegram/webhook",
+        }, clear=False):
+            settings = load_settings()
+            settings.validate_for_mode()
+            self.assertEqual(settings.webhook_full_url, "https://example.com/telegram/webhook")
+
+    def test_disable_auto_webhook_set_parses_boolean(self):
+        with patch.dict(os.environ, {
+            "BOT_MODE": RuntimeMode.WEBHOOK.value,
+            "TELEGRAM_BOT_TOKEN": "token",
+            "DATABASE_URL": "sqlite:///test.db",
+            "WEBHOOK_URL": "https://example.com",
+            "DISABLE_AUTO_WEBHOOK_SET": "true",
+        }, clear=False):
+            settings = load_settings()
+            self.assertTrue(settings.disable_auto_webhook_set)
 
     def test_polling_accepts_minimal_configuration(self):
         with patch.dict(os.environ, {
