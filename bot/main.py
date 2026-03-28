@@ -1,10 +1,11 @@
 import logging
-import os
-
 from bot.app.bootstrap import bootstrap_application
 from bot.app.logging import configure_logging
 from bot.config import RuntimeMode, load_settings
+from bot.webhook import create_webhook_app
 from bot.workers import run_worker
+
+import uvicorn
 
 logger = logging.getLogger(__name__)
 
@@ -37,27 +38,14 @@ def main():
 
     # 🔥 Webhook mode
     if settings.mode is RuntimeMode.WEBHOOK:
-        # 🔥 أهم تعديل (Render PORT)
-        port = int(os.getenv("PORT", settings.port))
-
-        webhook_url = f"{settings.webhook_url.rstrip('/')}{settings.webhook_path}"
-
         logger.info(
-            "Starting webhook server on %s:%s path=%s",
+            "Starting FastAPI webhook server on %s:%s path=%s",
             settings.listen_host,
-            port,
+            settings.port,
             settings.webhook_path,
         )
-
-        app.run_webhook(
-            listen=settings.listen_host,
-            port=port,  # ✅ تم إصلاح المشكلة هنا
-            url_path=settings.webhook_path.lstrip('/'),
-            webhook_url=webhook_url,
-            secret_token=settings.webhook_secret_token or None,
-            drop_pending_updates=True,
-            allowed_updates=None,
-        )
+        webhook_app = create_webhook_app(application=app, settings=settings)
+        uvicorn.run(webhook_app, host=settings.listen_host, port=settings.port)
         return
 
     # 🔧 Polling fallback
