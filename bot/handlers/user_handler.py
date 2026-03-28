@@ -135,7 +135,7 @@ async def check_subscriptions(user_id: int, bot) -> tuple[bool, list]:
 def build_subscription_keyboard(channels: list, lang: str) -> InlineKeyboardMarkup:
     keyboard = []
     for ch in channels:
-        title = ch.title or f"قناة {ch.id}"
+        title = ch.title or get_string("channel_fallback_title", lang, id=ch.id)
         link = ch.invite_link or (f"https://t.me/{ch.username}" if ch.username else "#")
         keyboard.append([InlineKeyboardButton(f"📢 {title}", url=link)])
 
@@ -217,65 +217,60 @@ def _store_pending_download(context: ContextTypes.DEFAULT_TYPE, payload: dict) -
     return token
 
 
-def _youtube_keyboard(token: str) -> InlineKeyboardMarkup:
+def _youtube_keyboard(token: str, lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎬 : مقطع فيديو", callback_data=f"ytdl:{token}:video")],
+        [InlineKeyboardButton(get_string("yt_button_video", lang), callback_data=f"ytdl:{token}:video")],
         [
-            InlineKeyboardButton("🔊 : بصمة صوتية", callback_data=f"ytdl:{token}:fingerprint"),
-            InlineKeyboardButton("🎶 : ملف صوتي", callback_data=f"ytdl:{token}:audio"),
+            InlineKeyboardButton(get_string("yt_button_fingerprint", lang), callback_data=f"ytdl:{token}:fingerprint"),
+            InlineKeyboardButton(get_string("yt_button_audio", lang), callback_data=f"ytdl:{token}:audio"),
         ],
     ])
 
 
-def _instagram_profile_keyboard(token: str) -> InlineKeyboardMarkup:
+def _instagram_profile_keyboard(token: str, lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📸 : معلومات المستخدم", callback_data=f"igpf:{token}:info")],
+        [InlineKeyboardButton(get_string("ig_button_info", lang), callback_data=f"igpf:{token}:info")],
         [
-            InlineKeyboardButton("🔥 : الستوريات", callback_data=f"igpf:{token}:stories"),
-            InlineKeyboardButton("❄️ : الهايلات", callback_data=f"igpf:{token}:highlights"),
+            InlineKeyboardButton(get_string("ig_button_stories", lang), callback_data=f"igpf:{token}:stories"),
+            InlineKeyboardButton(get_string("ig_button_highlights", lang), callback_data=f"igpf:{token}:highlights"),
         ],
     ])
 
 
-def _youtube_preview_text(info: dict) -> str:
-    title = info.get("title") or "بدون عنوان"
-    channel = info.get("channel") or "غير معروف"
+def _youtube_preview_text(info: dict, lang: str) -> str:
+    title = info.get("title") or get_string("yt_unknown_title", lang)
+    channel = info.get("channel") or get_string("yt_unknown_channel", lang)
     duration = _format_duration(info.get("duration"))
     views = _format_compact_number(info.get("view_count"))
     size = _format_filesize(info.get("filesize"))
     stats_line = f"🕒 {duration} |  👁️ {views}"
     if size:
         stats_line = f"{stats_line} | 💾 {size}"
-    return (
-        f"🎥 {title}\n"
-        f"👤 {channel}\n"
-        f"{stats_line}\n\n"
-        "اختر صيغة التحميل المناسبة\n\n"
-        "🎬 : مقطع فيديو.\n"
-        "🔊 : بصمة صوتية.  🎶 : ملف صوتي."
+    return get_string(
+        "yt_preview_text",
+        lang,
+        title=title,
+        channel=channel,
+        stats=stats_line,
     )
 
 
-def _instagram_profile_text(info: dict) -> str:
+def _instagram_profile_text(info: dict, lang: str) -> str:
     username = info.get("username") or ""
-    return (
-        "➘ : نتيجة البحث 🔍.\n"
-        f"➘ : حساب المستخدم: {username}،\n"
-        "➘ : أختر ما تود تحميله:"
-    )
+    return get_string("ig_profile_preview_text", lang, username=username)
 
 
-def _instagram_user_info_caption(info: dict) -> str:
+def _instagram_user_info_caption(info: dict, lang: str) -> str:
     bio = info.get("bio") or "."
-    return (
-        "⌁︙معلومات المستخدم 📸.\n"
-        f"⌁︙حساب المستخدم: {info.get('username') or ''}،\n"
-        f"⌁︙اسم المستخدم: {info.get('display_name') or ''}،\n"
-        f"⌁︙عدد المنشورات: {info.get('post_count') or 0}،\n"
-        f"⌁︙عدد المتابعين: {info.get('followers') or 0}،\n"
-        f"⌁︙عدد الذين يتابعهم: {info.get('following') or 0}،\n"
-        "⌁︙البايو:\n"
-        f"{bio}"
+    return get_string(
+        "ig_user_info_caption",
+        lang,
+        username=info.get("username") or "",
+        display_name=info.get("display_name") or "",
+        post_count=info.get("post_count") or 0,
+        followers=info.get("followers") or 0,
+        following=info.get("following") or 0,
+        bio=bio,
     )
 
 
@@ -288,12 +283,12 @@ def _instagram_profile_photo() -> BytesIO:
     return buffer
 
 
-def _collection_error_message(error_kind: str, *, collection: str) -> str:
+def _collection_error_message(error_kind: str, lang: str, *, collection: str) -> str:
     if error_kind == "private":
-        return "عذرا لايمكنك الاطلاع"
+        return get_string("collection_private_error", lang)
     if collection == "stories" and error_kind == "expired":
-        return "عذرا تم انتهاء صلاحية الستوري"
-    return "عذرا حدث خطاء ❌"
+        return get_string("collection_story_expired_error", lang)
+    return get_string("collection_generic_error", lang)
 
 
 async def _extract_instagram_collection(profile_url: str, collection: str) -> dict:
@@ -351,25 +346,25 @@ async def _enqueue_download_request(
 async def _send_youtube_preview(update: Update, context: ContextTypes.DEFAULT_TYPE, *, url: str, lang: str) -> None:
     info = await extract_media_info(url, "youtube")
     if not info.get("ok"):
-        await update.message.reply_text("عذرا حدث خطاء ❌")
+        await update.message.reply_text(get_string("collection_generic_error", lang))
         return
     token = _store_pending_download(context, {
         "platform": "youtube",
         "url": url,
         "caption_override": await _get_bot_signature(context),
     })
-    text = _youtube_preview_text(info)
+    text = _youtube_preview_text(info, lang)
     thumbnail = info.get("thumbnail")
     if thumbnail:
-        await update.message.reply_photo(photo=thumbnail, caption=text, reply_markup=_youtube_keyboard(token))
+        await update.message.reply_photo(photo=thumbnail, caption=text, reply_markup=_youtube_keyboard(token, lang))
     else:
-        await update.message.reply_text(text, reply_markup=_youtube_keyboard(token))
+        await update.message.reply_text(text, reply_markup=_youtube_keyboard(token, lang))
 
 
-async def _send_instagram_profile_preview(update: Update, context: ContextTypes.DEFAULT_TYPE, *, url: str) -> None:
+async def _send_instagram_profile_preview(update: Update, context: ContextTypes.DEFAULT_TYPE, *, url: str, lang: str) -> None:
     info = await extract_media_info(url, "instagram")
     if not info.get("ok"):
-        await update.message.reply_text(_collection_error_message(info.get("error", "generic"), collection="highlights"))
+        await update.message.reply_text(_collection_error_message(info.get("error", "generic"), lang, collection="highlights"))
         return
     token = _store_pending_download(context, {
         "platform": "instagram_profile",
@@ -377,7 +372,7 @@ async def _send_instagram_profile_preview(update: Update, context: ContextTypes.
         "info": info,
         "caption_override": await _get_bot_signature(context),
     })
-    await update.message.reply_text(_instagram_profile_text(info), reply_markup=_instagram_profile_keyboard(token))
+    await update.message.reply_text(_instagram_profile_text(info, lang), reply_markup=_instagram_profile_keyboard(token, lang))
 
 
 # ─── /start ───────────────────────────────────────────────────────────────────
@@ -446,13 +441,13 @@ async def _show_welcome(update, context, db_user, name: str, lang: str):
     if not isinstance(update, CallbackQuery):
         await update.message.reply_text(start_msg, reply_markup=main_markup)
         if extra_markup:
-            await update.message.reply_text("⌨️", reply_markup=extra_markup)
+            await update.message.reply_text(get_string("keyboard_placeholder", lang), reply_markup=extra_markup)
         return
 
     chat_id = update.message.chat_id
     await context.bot.send_message(chat_id, start_msg, reply_markup=main_markup)
     if extra_markup:
-        await context.bot.send_message(chat_id, "⌨️", reply_markup=extra_markup)
+        await context.bot.send_message(chat_id, get_string("keyboard_placeholder", lang), reply_markup=extra_markup)
 
 
 # ─── /help ────────────────────────────────────────────────────────────────────
@@ -475,7 +470,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         main_markup, extra_markup = build_reply_markup(inline_rows, reply_btns)
         await update.message.reply_text(help_msg, reply_markup=main_markup)
         if extra_markup:
-            await update.message.reply_text("⌨️", reply_markup=extra_markup)
+            await update.message.reply_text(get_string("keyboard_placeholder", lang), reply_markup=extra_markup)
     finally:
         db.close()
 
@@ -493,10 +488,7 @@ async def lang_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     enabled = get_enabled_languages()
     if len(enabled) <= 1:
-        await update.message.reply_text(
-            "🌍 البوت يدعم لغة واحدة فقط حالياً.\n"
-            "يمكن للمسؤول تفعيل المزيد من اللغات من لوحة التحكم."
-        )
+        await update.message.reply_text(get_string("single_language_only", lang))
         return
 
     await update.message.reply_text(
@@ -527,7 +519,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _, token, action = data.split(":", 2)
             pending = _pending_downloads(context).get(token)
             if not pending:
-                await query.message.reply_text("عذرا حدث خطاء ❌")
+                await query.message.reply_text(get_string("collection_generic_error", lang))
                 return
             mode = "default"
             if action == "audio":
@@ -551,26 +543,26 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _, token, action = data.split(":", 2)
             pending = _pending_downloads(context).get(token)
             if not pending:
-                await query.message.reply_text("عذرا حدث خطاء ❌")
+                await query.message.reply_text(get_string("collection_generic_error", lang))
                 return
             if action == "info":
                 await context.bot.send_photo(
                     chat_id=query.message.chat_id,
                     photo=_instagram_profile_photo(),
-                    caption=_instagram_user_info_caption(pending.get("info", {})),
+                    caption=_instagram_user_info_caption(pending.get("info", {}), lang),
                 )
                 return
 
             collection_info = await _extract_instagram_collection(pending["url"], action)
             if not collection_info.get("ok"):
                 await query.message.reply_text(
-                    _collection_error_message(collection_info.get("error", "generic"), collection=action)
+                    _collection_error_message(collection_info.get("error", "generic"), lang, collection=action)
                 )
                 return
 
             entries = [entry for entry in collection_info.get("entries", []) if entry.get("url")]
             if not entries:
-                await query.message.reply_text(_collection_error_message("expired", collection=action))
+                await query.message.reply_text(_collection_error_message("expired", lang, collection=action))
                 return
 
             for entry in entries:
@@ -601,7 +593,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             lang_obj = db.query(BotLanguage).filter_by(code=new_lang, is_enabled=True).first()
             if not lang_obj:
-                await query.answer("⚠️ هذه اللغة غير مفعّلة حالياً", show_alert=True)
+                await query.answer(get_string("language_not_enabled", lang), show_alert=True)
                 return
 
             db_user.language_code = new_lang
@@ -686,7 +678,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if get_setting(enabled_key, default_enabled) != "true":
             disabled_msg = get_lang_setting(
                 f"{platform}_disabled_msg", lang,
-                get_setting("disabled_platform_generic_msg", f"عذراً، {platform_name} غير مفعل حالياً في البوت.")
+                get_setting("disabled_platform_generic_msg", get_string("disabled_platform_generic_msg", lang, platform_name=platform_name))
             )
             await update.message.reply_text(disabled_msg)
             return
@@ -696,7 +688,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             rate_limit_message = get_lang_setting(
                 "rate_limit_message",
                 lang,
-                "عذرا حدث خطاء ❌يرجى المحاولة لاحقا",
+                get_string("rate_limit_message", lang),
             )
             await update.message.reply_text(rate_limit_message.replace("{seconds}", str(retry_after)))
             return
@@ -707,7 +699,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if platform == "instagram":
             if is_instagram_profile_url(detected_url):
-                await _send_instagram_profile_preview(update, context, url=detected_url)
+                await _send_instagram_profile_preview(update, context, url=detected_url, lang=lang)
                 return
             await _enqueue_download_request(
                 update.message,
