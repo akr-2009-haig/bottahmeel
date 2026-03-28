@@ -22,8 +22,10 @@ class AppSettings:
     redis_url: str
     queue_name: str
     webhook_url: str
+    webhook_full_url: str
     webhook_path: str
     webhook_secret_token: str
+    disable_auto_webhook_set: bool
     listen_host: str
     port: int
     temp_base_dir: str
@@ -48,8 +50,8 @@ class AppSettings:
             raise EnvironmentError("DATABASE_URL is not set")
         if self.queue_backend == "redis" and not self.redis_url:
             raise EnvironmentError("REDIS_URL must be set when QUEUE_BACKEND=redis")
-        if self.mode is RuntimeMode.WEBHOOK and not self.webhook_url:
-            raise EnvironmentError("WEBHOOK_URL must be set when BOT_MODE=webhook")
+        if self.mode is RuntimeMode.WEBHOOK and not (self.webhook_full_url or self.webhook_url):
+            raise EnvironmentError("WEBHOOK_FULL_URL or WEBHOOK_URL must be set when BOT_MODE=webhook")
 
 
 @lru_cache(maxsize=1)
@@ -82,8 +84,10 @@ def load_settings() -> AppSettings:
         redis_url=redis_url,
         queue_name=os.environ.get("QUEUE_NAME", "karar-bot-jobs").strip() or "karar-bot-jobs",
         webhook_url=os.environ.get("WEBHOOK_URL", "").strip(),
+        webhook_full_url=os.environ.get("WEBHOOK_FULL_URL", "").strip(),
         webhook_path=webhook_path,
         webhook_secret_token=os.environ.get("WEBHOOK_SECRET_TOKEN", "").strip(),
+        disable_auto_webhook_set=os.environ.get("DISABLE_AUTO_WEBHOOK_SET", "false").strip().lower() == "true",
         listen_host=os.environ.get("BOT_LISTEN_HOST", "0.0.0.0").strip() or "0.0.0.0",
         port=int(os.environ.get("PORT", "8080").strip() or "8080"),
         temp_base_dir=os.environ.get("BOT_TEMP_DIR", "/tmp/karar-bot").strip() or "/tmp/karar-bot",
