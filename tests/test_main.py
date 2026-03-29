@@ -55,3 +55,20 @@ class MainEntrypointTests(unittest.TestCase):
 
         uvicorn_run.assert_called_once()
         self.assertEqual(uvicorn_run.call_args.kwargs["port"], 10000)
+
+    def test_webhook_defers_bootstrap_until_web_server_startup(self):
+        settings = self._settings(port=8080)
+        with (
+            patch("bot.main.configure_logging"),
+            patch("bot.main.load_settings", return_value=settings),
+            patch("bot.main.bootstrap_application") as bootstrap_application,
+            patch("bot.main.create_webhook_app", return_value=MagicMock()) as create_webhook_app,
+            patch("bot.main.uvicorn.run"),
+        ):
+            main()
+
+        bootstrap_application.assert_not_called()
+        self.assertIs(
+            create_webhook_app.call_args.kwargs["application_factory"],
+            bootstrap_application,
+        )
