@@ -78,4 +78,4 @@ services:
 
 databases:
   - name: karar-bot-db
-    plan: basic
+    plan: free
