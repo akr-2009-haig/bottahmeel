@@ -475,3 +475,27 @@ The health server listens on `HEALTHCHECK_PORT`.
 - Add a small Prometheus/OpenTelemetry exporter for queue depth, worker heartbeats, and retry/failure counts.
 - Add a scheduled backup runner (cron/systemd/Kubernetes CronJob) that wraps `scripts/postgres_backup.sh` and ships dumps off-host.
 - Add worker autoscaling and deployment automation around Redis/Celery queue depth.
+
+## Render one-click blueprint (webhook + worker)
+
+This repository now includes a ready `render.yaml` blueprint with:
+- `karar-bot-webhook` web service (`python run_bot.py`)
+- `karar-bot-worker` background worker (`python run_bot.py worker`)
+- managed Redis (`karar-bot-redis`)
+- managed PostgreSQL (`karar-bot-db`)
+
+### Deploy on Render
+1. Push this repository to GitHub.
+2. In Render, choose **New +** → **Blueprint** and select the repo.
+3. Render will create all services from `render.yaml`.
+4. Set only these required secrets on **both** services where prompted:
+   - `TELEGRAM_BOT_TOKEN`
+   - `BOT_OWNER_ID`
+   - `WEBHOOK_SECRET_TOKEN`
+5. Set `WEBHOOK_URL` on the web service to your Render HTTPS URL (for example `https://karar-bot-webhook.onrender.com`).
+6. Deploy.
+
+Webhook endpoint used by Telegram will be:
+- `https://<your-render-domain>/telegram/webhook`
+
+The app is already configured to bind to `0.0.0.0` and use the `PORT` environment variable in webhook mode.
