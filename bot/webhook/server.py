@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -35,6 +36,20 @@ def create_webhook_app(*, application: Application, settings: AppSettings) -> Fa
         await application.initialize()
         await application.start()
 
+        embedded_worker_stop_event: asyncio.Event | None = None
+        embedded_worker_task: asyncio.Task | None = None
+        if settings.queue_backend == "database":
+            embedded_worker_stop_event = asyncio.Event()
+            from bot.workers.runner import run_database_worker_loop
+
+            embedded_worker_task = asyncio.create_task(
+                run_database_worker_loop(
+                    stop_event=embedded_worker_stop_event,
+                    worker_name=f"{settings.worker_name}-webhook",
+                )
+            )
+            logger.info("Started embedded database worker loop for webhook runtime")
+
         if settings.disable_auto_webhook_set:
             logger.info("Skipping automatic webhook registration (DISABLE_AUTO_WEBHOOK_SET=true)")
         else:
@@ -50,6 +65,13 @@ def create_webhook_app(*, application: Application, settings: AppSettings) -> Fa
             yield
         finally:
             logger.info("Stopping Telegram webhook runtime")
+            if embedded_worker_stop_event is not None:
+                embedded_worker_stop_event.set()
+            if embedded_worker_task is not None:
+                try:
+                    await asyncio.wait_for(embedded_worker_task, timeout=10)
+                except asyncio.TimeoutError:
+                    embedded_worker_task.cancel()
             if not settings.disable_auto_webhook_set:
                 await application.bot.delete_webhook(drop_pending_updates=False)
             await application.stop()
