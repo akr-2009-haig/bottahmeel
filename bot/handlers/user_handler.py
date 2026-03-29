@@ -1,6 +1,7 @@
 import logging
 import os
 import json
+import asyncio
 from html import escape
 from io import BytesIO
 from uuid import uuid4
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 BOT_OWNER_ID = int(os.environ.get("BOT_OWNER_ID", "0"))
 PENDING_DOWNLOADS_KEY = "pending_downloads"
+YOUTUBE_PREVIEW_TIMEOUT_SECONDS = 8
 
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
@@ -364,10 +366,45 @@ async def _enqueue_download_request(
         return None
 
 
-async def _send_youtube_preview(update: Update, context: ContextTypes.DEFAULT_TYPE, *, url: str, lang: str) -> None:
-    info = await extract_media_info(url, "youtube")
+async def _send_youtube_preview(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    user_id: int,
+    url: str,
+    lang: str,
+) -> None:
+    try:
+        info = await asyncio.wait_for(
+            extract_media_info(url, "youtube"),
+            timeout=YOUTUBE_PREVIEW_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Timed out building YouTube preview, enqueueing download directly url=%s", url)
+        await _enqueue_download_request(
+            update.message,
+            context,
+            user_id=user_id,
+            chat_id=update.effective_chat.id,
+            url=url,
+            platform="youtube",
+            lang=lang,
+            caption_override=await _get_bot_signature(context),
+        )
+        return
+
     if not info.get("ok"):
-        await update.message.reply_text(get_string("collection_generic_error", lang))
+        logger.info("YouTube preview extraction failed, enqueueing download directly url=%s", url)
+        await _enqueue_download_request(
+            update.message,
+            context,
+            user_id=user_id,
+            chat_id=update.effective_chat.id,
+            url=url,
+            platform="youtube",
+            lang=lang,
+            caption_override=await _get_bot_signature(context),
+        )
         return
     info = {**info, "source_url": url}
     token = _store_pending_download(context, {
@@ -775,7 +812,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         if platform == "youtube":
-            await _send_youtube_preview(update, context, url=detected_url, lang=lang)
+            await _send_youtube_preview(update, context, user_id=db_user.id, url=detected_url, lang=lang)
             return
 
         if platform == "instagram":
