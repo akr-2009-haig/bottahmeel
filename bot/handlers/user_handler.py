@@ -267,7 +267,7 @@ def _youtube_preview_text(info: dict, lang: str) -> str:
         lang,
         title=title,
         channel=channel,
-        stats=escape(stats_line),
+        stats=stats_line,
     )
 
 

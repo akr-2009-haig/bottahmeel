@@ -98,7 +98,6 @@ class UserFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["photo"], "https://example.com/thumb.jpg")
         self.assertIn('🎥 <a href="https://youtu.be/demo123">شيلة على هونك - ابو حمزة الحنفاشي</a>', kwargs["caption"])
         self.assertIn('👤 <a href="https://youtu.be/demo123">قناة ايمن Ayman للإنتاج الفني - Topic</a>', kwargs["caption"])
-        self.assertIn('href="https://youtu.be/demo123"', kwargs["caption"])
         self.assertEqual(kwargs["parse_mode"], "HTML")
         self.assertEqual(kwargs["reply_markup"].inline_keyboard[0][0].text, "🎬 : مقطع فيديو")
         self.assertEqual(kwargs["reply_markup"].inline_keyboard[1][0].text, "🔊 : بصمة صوتية")
