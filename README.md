@@ -298,6 +298,8 @@ PORT=8080 \
 python run_bot.py
 ```
 
+If `BOT_MODE` is left unset on Render, the app now auto-detects webhook mode when Render injects `PORT` and you already configured `WEBHOOK_URL` or `WEBHOOK_FULL_URL`.
+
 Required companion services/processes:
 - PostgreSQL
 - Redis

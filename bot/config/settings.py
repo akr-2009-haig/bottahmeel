@@ -56,7 +56,15 @@ class AppSettings:
 
 @lru_cache(maxsize=1)
 def load_settings() -> AppSettings:
-    mode_raw = os.environ.get("BOT_MODE", RuntimeMode.POLLING.value).strip().lower() or RuntimeMode.POLLING.value
+    webhook_url = os.environ.get("WEBHOOK_URL", "").strip()
+    webhook_full_url = os.environ.get("WEBHOOK_FULL_URL", "").strip()
+    mode_raw = os.environ.get("BOT_MODE", "").strip().lower()
+    if not mode_raw:
+        mode_raw = (
+            RuntimeMode.WEBHOOK.value
+            if os.environ.get("PORT", "").strip() and (webhook_full_url or webhook_url)
+            else RuntimeMode.POLLING.value
+        )
     try:
         mode = RuntimeMode(mode_raw)
     except ValueError as exc:
@@ -83,8 +91,8 @@ def load_settings() -> AppSettings:
         queue_backend=queue_backend,
         redis_url=redis_url,
         queue_name=os.environ.get("QUEUE_NAME", "karar-bot-jobs").strip() or "karar-bot-jobs",
-        webhook_url=os.environ.get("WEBHOOK_URL", "").strip(),
-        webhook_full_url=os.environ.get("WEBHOOK_FULL_URL", "").strip(),
+        webhook_url=webhook_url,
+        webhook_full_url=webhook_full_url,
         webhook_path=webhook_path,
         webhook_secret_token=os.environ.get("WEBHOOK_SECRET_TOKEN", "").strip(),
         disable_auto_webhook_set=os.environ.get("DISABLE_AUTO_WEBHOOK_SET", "false").strip().lower() == "true",

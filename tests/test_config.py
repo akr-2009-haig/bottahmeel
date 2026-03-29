@@ -90,3 +90,24 @@ class SettingsTests(unittest.TestCase):
         }, clear=False):
             settings = load_settings()
             self.assertEqual(settings.port, 9090)
+
+    def test_render_env_defaults_to_webhook_when_port_and_webhook_url_exist(self):
+        with patch.dict(os.environ, {
+            "TELEGRAM_BOT_TOKEN": "token",
+            "DATABASE_URL": "sqlite:///test.db",
+            "WEBHOOK_URL": "https://example.com",
+            "PORT": "10000",
+        }, clear=True):
+            settings = load_settings()
+            self.assertEqual(settings.mode, RuntimeMode.WEBHOOK)
+
+    def test_explicit_bot_mode_still_wins_over_render_auto_detection(self):
+        with patch.dict(os.environ, {
+            "BOT_MODE": RuntimeMode.POLLING.value,
+            "TELEGRAM_BOT_TOKEN": "token",
+            "DATABASE_URL": "sqlite:///test.db",
+            "WEBHOOK_URL": "https://example.com",
+            "PORT": "10000",
+        }, clear=True):
+            settings = load_settings()
+            self.assertEqual(settings.mode, RuntimeMode.POLLING)

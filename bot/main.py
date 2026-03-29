@@ -4,7 +4,6 @@ from bot.app.bootstrap import bootstrap_application
 from bot.app.logging import configure_logging
 from bot.config import RuntimeMode, load_settings
 from bot.webhook import create_webhook_app
-from bot.workers import run_worker
 
 import uvicorn
 
@@ -18,6 +17,8 @@ def main():
 
     # 🔧 Worker mode
     if settings.mode is RuntimeMode.WORKER:
+        from bot.workers import run_worker
+
         run_worker()
         return
 
