@@ -39,17 +39,15 @@ def main():
 
     # 🔥 Webhook mode
     if settings.mode is RuntimeMode.WEBHOOK:
-        runtime_port = settings.port
-        port_from_env = os.environ.get("PORT", "").strip()
-        if port_from_env:
-            try:
-                runtime_port = int(port_from_env)
-            except ValueError:
-                logger.warning(
-                    "Invalid PORT value %r; falling back to settings.port=%s",
-                    port_from_env,
-                    settings.port,
-                )
+        try:
+            runtime_port = int(os.environ.get("PORT", settings.port))
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid PORT value %r; falling back to settings.port=%s",
+                os.environ.get("PORT"),
+                settings.port,
+            )
+            runtime_port = settings.port
 
         logger.info(
             "Starting FastAPI webhook server on %s:%s path=%s",

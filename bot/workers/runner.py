@@ -189,10 +189,13 @@ async def _process_download(bot: Bot, payload: dict) -> dict:
             telegram_user=db_user,
             platform=platform,
         )
-        if platform == "tiktok" and media_type == "photo":
+        if platform == "tiktok" and media_type in {"photo", "video"}:
             bot_name = get_setting("bot_name", "SaveEliteBot")
             mention = bot_name if str(bot_name).startswith("@") else f"@{bot_name}"
-            caption = f"🤖 {mention}"
+            if media_type == "photo":
+                caption = f"🤖 {mention}"
+            else:
+                caption = f"📥 تم التحميل بنجاح\n🤖 {mention}"
         main_markup, extra_markup = DownloadService.get_download_reply_markup()
         await _safe_delete_message(bot, chat_id, status_message_id)
         tiktok_audio_markup = None

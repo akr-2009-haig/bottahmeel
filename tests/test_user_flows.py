@@ -96,8 +96,9 @@ class UserFlowTests(unittest.IsolatedAsyncioTestCase):
         message.reply_photo.assert_awaited_once()
         kwargs = message.reply_photo.await_args.kwargs
         self.assertEqual(kwargs["photo"], "https://example.com/thumb.jpg")
-        self.assertIn("🎥 شيلة على هونك - ابو حمزة الحنفاشي", kwargs["caption"])
-        self.assertIn("👤 قناة ايمن Ayman للإنتاج الفني - Topic", kwargs["caption"])
+        self.assertIn('🎥 <a href="https://youtu.be/demo123">شيلة على هونك - ابو حمزة الحنفاشي</a>', kwargs["caption"])
+        self.assertIn('👤 <a href="https://youtu.be/demo123">قناة ايمن Ayman للإنتاج الفني - Topic</a>', kwargs["caption"])
+        self.assertEqual(kwargs["parse_mode"], "HTML")
         self.assertEqual(kwargs["reply_markup"].inline_keyboard[0][0].text, "🎬 : مقطع فيديو")
         self.assertEqual(kwargs["reply_markup"].inline_keyboard[1][0].text, "🔊 : بصمة صوتية")
         self.assertEqual(kwargs["reply_markup"].inline_keyboard[1][1].text, "🎶 : ملف صوتي")
@@ -136,7 +137,7 @@ class UserFlowTests(unittest.IsolatedAsyncioTestCase):
         ):
             await user_handler.message_handler(update, context)
 
-        message.reply_text.assert_awaited_once_with("جارٍ التحميل")
+        message.reply_text.assert_awaited_once_with("⏰┇يرجى الانتظار، يتم قياس حجم التحميل...")
         enqueue_download.assert_called_once_with(
             user_id=15,
             chat_id=601,
@@ -233,6 +234,74 @@ class UserFlowTests(unittest.IsolatedAsyncioTestCase):
             caption_override="@UnitBot",
         )
         wait_msg.edit_text.assert_not_awaited()
+        db.close.assert_called_once()
+
+    async def test_callback_handler_shows_youtube_quality_buttons_before_video_download(self):
+        db_user = SimpleNamespace(id=16, status=user_handler.UserStatus.ACTIVE, language_code="ar", is_admin=False)
+        db = _db_with_user(db_user)
+        query = SimpleNamespace(
+            data="ytdl:abc12345:video",
+            from_user=SimpleNamespace(id=44),
+            answer=AsyncMock(),
+            message=SimpleNamespace(chat_id=702, reply_text=AsyncMock()),
+        )
+        update = SimpleNamespace(callback_query=query)
+        context = SimpleNamespace(
+            user_data={"pending_downloads": {"abc12345": {"url": "https://youtu.be/demo123", "caption_override": "@UnitBot"}}},
+            bot=SimpleNamespace(get_me=AsyncMock(return_value=SimpleNamespace(username="UnitBot"))),
+            bot_data={},
+        )
+
+        with (
+            patch.object(user_handler, "SessionLocal", return_value=db),
+            patch.object(user_handler, "get_setting", side_effect=_settings_side_effect({})),
+            patch.object(user_handler.DownloadService, "enqueue_download") as enqueue_download,
+        ):
+            await user_handler.callback_handler(update, context)
+
+        query.message.reply_text.assert_awaited_once()
+        kwargs = query.message.reply_text.await_args.kwargs
+        self.assertEqual(kwargs["reply_markup"].inline_keyboard[0][0].text, "144")
+        self.assertEqual(kwargs["reply_markup"].inline_keyboard[0][1].text, "240")
+        self.assertEqual(kwargs["reply_markup"].inline_keyboard[0][2].text, "360")
+        self.assertEqual(kwargs["reply_markup"].inline_keyboard[0][3].text, "480")
+        enqueue_download.assert_not_called()
+        db.close.assert_called_once()
+
+    async def test_callback_handler_enqueues_youtube_selected_quality(self):
+        db_user = SimpleNamespace(id=17, status=user_handler.UserStatus.ACTIVE, language_code="ar", is_admin=False)
+        db = _db_with_user(db_user)
+        wait_msg = SimpleNamespace(message_id=90, edit_text=AsyncMock())
+        query = SimpleNamespace(
+            data="ytdlq:abc12345:360",
+            from_user=SimpleNamespace(id=45),
+            answer=AsyncMock(),
+            message=SimpleNamespace(chat_id=703, reply_text=AsyncMock(return_value=wait_msg)),
+        )
+        update = SimpleNamespace(callback_query=query)
+        context = SimpleNamespace(
+            user_data={"pending_downloads": {"abc12345": {"url": "https://youtu.be/demo123", "caption_override": "@UnitBot"}}},
+            bot=SimpleNamespace(get_me=AsyncMock(return_value=SimpleNamespace(username="UnitBot"))),
+            bot_data={},
+        )
+
+        with (
+            patch.object(user_handler, "SessionLocal", return_value=db),
+            patch.object(user_handler, "get_setting", side_effect=_settings_side_effect({})),
+            patch.object(user_handler.DownloadService, "enqueue_download", return_value=654) as enqueue_download,
+        ):
+            await user_handler.callback_handler(update, context)
+
+        enqueue_download.assert_called_once_with(
+            user_id=17,
+            chat_id=703,
+            url="https://youtu.be/demo123",
+            platform="youtube",
+            lang="ar",
+            status_message_id=90,
+            download_mode="video_360",
+            caption_override="@UnitBot",
+        )
         db.close.assert_called_once()
 
     async def test_callback_handler_sends_instagram_profile_card(self):
