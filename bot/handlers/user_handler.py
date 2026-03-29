@@ -1,6 +1,7 @@
 import logging
 import os
 import json
+from html import escape
 from io import BytesIO
 from uuid import uuid4
 
@@ -227,6 +228,13 @@ def _youtube_keyboard(token: str, lang: str) -> InlineKeyboardMarkup:
     ])
 
 
+def _youtube_quality_keyboard(token: str) -> InlineKeyboardMarkup:
+    qualities = ("144", "240", "360", "480")
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(quality, callback_data=f"ytdlq:{token}:{quality}") for quality in qualities]
+    ])
+
+
 def _instagram_profile_keyboard(token: str, lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(get_string("ig_button_info", lang), callback_data=f"igpf:{token}:info")],
@@ -240,6 +248,14 @@ def _instagram_profile_keyboard(token: str, lang: str) -> InlineKeyboardMarkup:
 def _youtube_preview_text(info: dict, lang: str) -> str:
     title = info.get("title") or get_string("yt_unknown_title", lang)
     channel = info.get("channel") or get_string("yt_unknown_channel", lang)
+    source_url = info.get("source_url") or info.get("url") or ""
+    if source_url:
+        escaped_url = escape(source_url, quote=True)
+        title = f'<a href="{escaped_url}">{escape(title)}</a>'
+        channel = f'<a href="{escaped_url}">{escape(channel)}</a>'
+    else:
+        title = escape(title)
+        channel = escape(channel)
     duration = _format_duration(info.get("duration"))
     views = _format_compact_number(info.get("view_count"))
     size = _format_filesize(info.get("filesize"))
@@ -251,7 +267,7 @@ def _youtube_preview_text(info: dict, lang: str) -> str:
         lang,
         title=title,
         channel=channel,
-        stats=stats_line,
+        stats=escape(stats_line),
     )
 
 
@@ -353,6 +369,7 @@ async def _send_youtube_preview(update: Update, context: ContextTypes.DEFAULT_TY
     if not info.get("ok"):
         await update.message.reply_text(get_string("collection_generic_error", lang))
         return
+    info = {**info, "source_url": url}
     token = _store_pending_download(context, {
         "platform": "youtube",
         "url": url,
@@ -361,9 +378,14 @@ async def _send_youtube_preview(update: Update, context: ContextTypes.DEFAULT_TY
     text = _youtube_preview_text(info, lang)
     thumbnail = info.get("thumbnail")
     if thumbnail:
-        await update.message.reply_photo(photo=thumbnail, caption=text, reply_markup=_youtube_keyboard(token, lang))
+        await update.message.reply_photo(
+            photo=thumbnail,
+            caption=text,
+            reply_markup=_youtube_keyboard(token, lang),
+            parse_mode="HTML",
+        )
     else:
-        await update.message.reply_text(text, reply_markup=_youtube_keyboard(token, lang))
+        await update.message.reply_text(text, reply_markup=_youtube_keyboard(token, lang), parse_mode="HTML")
 
 
 async def _send_instagram_profile_preview(update: Update, context: ContextTypes.DEFAULT_TYPE, *, url: str, lang: str) -> None:
@@ -526,6 +548,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not pending:
                 await query.message.reply_text(get_string("collection_generic_error", lang))
                 return
+            if action == "video":
+                await query.message.reply_text(
+                    get_string("yt_quality_prompt", lang),
+                    reply_markup=_youtube_quality_keyboard(token),
+                )
+                return
             mode = "default"
             if action == "audio":
                 mode = "audio"
@@ -540,6 +568,28 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 platform="youtube",
                 lang=lang,
                 download_mode=mode,
+                caption_override=pending.get("caption_override"),
+            )
+            return
+
+        if data.startswith("ytdlq:"):
+            _, token, quality = data.split(":", 2)
+            pending = _pending_downloads(context).get(token)
+            if not pending:
+                await query.message.reply_text(get_string("collection_generic_error", lang))
+                return
+            if quality not in {"144", "240", "360", "480"}:
+                await query.message.reply_text(get_string("collection_generic_error", lang))
+                return
+            await _enqueue_download_request(
+                query.message,
+                context,
+                user_id=db_user.id,
+                chat_id=query.message.chat_id,
+                url=pending["url"],
+                platform="youtube",
+                lang=lang,
+                download_mode=f"video_{quality}",
                 caption_override=pending.get("caption_override"),
             )
             return

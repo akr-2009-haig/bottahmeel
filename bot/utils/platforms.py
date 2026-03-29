@@ -260,6 +260,12 @@ async def download_media(url: str, platform: str = "unknown", *, download_mode: 
             'preferredcodec': 'mp3',
             'preferredquality': '192',
         }]
+    elif download_mode.startswith("video_"):
+        quality = download_mode.split("_", 1)[1]
+        opts['format'] = (
+            f'bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/'
+            f'best[height<={quality}][ext=mp4]/best[height<={quality}]/best'
+        )
     elif download_mode == "fingerprint":
         opts['format'] = 'bestaudio[ext=m4a]/bestaudio/best'
     elif 'format' not in opts:
