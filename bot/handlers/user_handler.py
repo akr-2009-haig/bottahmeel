@@ -9,7 +9,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRe
 from telegram.ext import ContextTypes
 from PIL import Image
 
-from bot.database import SessionLocal, SubscriptionChannel, User, UserStatus, BotLanguage, get_setting
+from bot.database import Download, SessionLocal, SubscriptionChannel, User, UserStatus, BotLanguage, get_setting
 from bot.locales import get_string
 from bot.security import check_download_rate_limit
 from bot.services import DownloadService
@@ -320,9 +320,14 @@ async def _enqueue_download_request(
     lang: str,
     download_mode: str = "default",
     caption_override: str | None = None,
+    waiting_text_override: str | None = None,
 ):
+    try:
+        await context.bot.send_chat_action(chat_id=chat_id, action="upload_video")
+    except Exception:
+        pass
     wait_msg = await reply_target.reply_text(
-        get_lang_setting("downloading_message", lang, get_string("downloading", lang))
+        waiting_text_override or get_lang_setting("downloading_message", lang, get_string("downloading", lang))
     )
     try:
         job_id = DownloadService.enqueue_download(
@@ -539,6 +544,32 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
+        if data.startswith("ttaudio:"):
+            _, raw_download_id = data.split(":", 1)
+            if not raw_download_id.isdigit():
+                await query.message.reply_text(get_string("collection_generic_error", lang))
+                return
+            source_download = (
+                db.query(Download)
+                .filter_by(id=int(raw_download_id), user_id=db_user.id, platform="tiktok", success=True)
+                .first()
+            )
+            if not source_download:
+                await query.message.reply_text(get_string("collection_generic_error", lang))
+                return
+            await _enqueue_download_request(
+                query.message,
+                context,
+                user_id=db_user.id,
+                chat_id=query.message.chat_id,
+                url=source_download.url,
+                platform="tiktok",
+                lang=lang,
+                download_mode="audio",
+                waiting_text_override=get_string("downloading", lang),
+            )
+            return
+
         if data.startswith("igpf:"):
             _, token, action = data.split(":", 2)
             pending = _pending_downloads(context).get(token)
@@ -721,6 +752,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             url=detected_url,
             platform=platform,
             lang=lang,
+            waiting_text_override=get_string("downloading", lang) if platform == "tiktok" else None,
         )
     finally:
         db.close()

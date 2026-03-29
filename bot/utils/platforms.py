@@ -255,6 +255,11 @@ async def download_media(url: str, platform: str = "unknown", *, download_mode: 
     opts['outtmpl'] = outtmpl
     if download_mode == "audio":
         opts['format'] = 'bestaudio[ext=m4a]/bestaudio/best'
+        opts['postprocessors'] = [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }]
     elif download_mode == "fingerprint":
         opts['format'] = 'bestaudio[ext=m4a]/bestaudio/best'
     elif 'format' not in opts:
@@ -276,7 +281,11 @@ async def download_media(url: str, platform: str = "unknown", *, download_mode: 
             if not os.path.exists(filepath):
                 files = [f for f in os.listdir(tmp_dir) if not f.endswith('.part')]
                 if files:
-                    filepath = os.path.join(tmp_dir, sorted(files)[0])
+                    if download_mode == "audio":
+                        files = sorted(files, key=lambda name: (0 if name.lower().endswith(".mp3") else 1, name))
+                    else:
+                        files = sorted(files)
+                    filepath = os.path.join(tmp_dir, files[0])
                     ext = filepath.rsplit('.', 1)[-1].lower()
                 else:
                     return None, "video", title

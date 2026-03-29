@@ -217,7 +217,7 @@ class DownloadService:
         return build_reply_markup(inline_rows, reply_buttons)
 
     @staticmethod
-    def record_download_result(*, user_id: int, platform: str, url: str, media_type: str, success: bool) -> None:
+    def record_download_result(*, user_id: int, platform: str, url: str, media_type: str, success: bool) -> int | None:
         db = SessionLocal()
         try:
             db_user = db.query(User).filter_by(id=user_id).first()
@@ -226,16 +226,20 @@ class DownloadService:
                 counter_field = _PLATFORM_COUNT_FIELDS.get(platform)
                 if counter_field and hasattr(db_user, counter_field):
                     setattr(db_user, counter_field, (getattr(db_user, counter_field) or 0) + 1)
-            db.add(Download(
+            download_record = Download(
                 user_id=user_id,
                 platform=platform,
                 url=url,
                 media_type=media_type,
                 success=success,
-            ))
+            )
+            db.add(download_record)
             db.commit()
+            db.refresh(download_record)
+            return download_record.id
         except Exception as exc:
             db.rollback()
             logger.error("Failed to record download result: %s", exc)
+            return None
         finally:
             db.close()
