@@ -189,10 +189,35 @@ async def _process_download(bot: Bot, payload: dict) -> dict:
             telegram_user=db_user,
             platform=platform,
         )
+        if platform == "tiktok" and media_type == "photo":
+            bot_name = get_setting("bot_name", "SaveEliteBot")
+            mention = bot_name if str(bot_name).startswith("@") else f"@{bot_name}"
+            caption = f"🤖 {mention}"
         main_markup, extra_markup = DownloadService.get_download_reply_markup()
         await _safe_delete_message(bot, chat_id, status_message_id)
+        tiktok_audio_markup = None
+        if platform == "tiktok" and media_type == "video" and download_mode == "default":
+            saved_download_id = DownloadService.record_download_result(
+                user_id=user_id,
+                platform=platform,
+                url=url,
+                media_type=media_type,
+                success=True,
+            )
+            if saved_download_id:
+                tiktok_audio_markup = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🎵 تحميل الصوت", callback_data=f"ttaudio:{saved_download_id}")
+                ]])
         try:
             with open(filepath, "rb") as media_handle:
+                action_for_media = {
+                    "photo": "upload_photo",
+                    "audio": "upload_voice",
+                    "voice": "upload_voice",
+                    "document": "upload_document",
+                    "video": "upload_video",
+                }.get(media_type, "upload_video")
+                await bot.send_chat_action(chat_id=chat_id, action=action_for_media)
                 if media_type == "photo":
                     await bot.send_photo(chat_id=chat_id, photo=media_handle, caption=caption, reply_markup=main_markup)
                 elif media_type == "audio":
@@ -202,10 +227,12 @@ async def _process_download(bot: Bot, payload: dict) -> dict:
                 elif media_type == "document":
                     await bot.send_document(chat_id=chat_id, document=media_handle, caption=caption, reply_markup=main_markup)
                 else:
-                    await bot.send_video(chat_id=chat_id, video=media_handle, caption=caption, supports_streaming=True, reply_markup=main_markup)
+                    final_markup = tiktok_audio_markup or main_markup
+                    await bot.send_video(chat_id=chat_id, video=media_handle, caption=caption, supports_streaming=True, reply_markup=final_markup)
             if extra_markup:
                 await bot.send_message(chat_id=chat_id, text="⌨️", reply_markup=extra_markup)
-            DownloadService.record_download_result(user_id=user_id, platform=platform, url=url, media_type=media_type, success=True)
+            if not (platform == "tiktok" and media_type == "video" and download_mode == "default"):
+                DownloadService.record_download_result(user_id=user_id, platform=platform, url=url, media_type=media_type, success=True)
             return {"status": "sent", "media_type": media_type}
         finally:
             cleanup_path(filepath)
