@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from telegram import BotCommand, Update
+from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
 from bot.admin.admin_handler import admin_callback, admin_command, admin_message_handler, is_admin
@@ -82,13 +82,9 @@ async def combined_message_handler(update: Update, context):
 
 
 async def _post_init(application: Application) -> None:
-    await application.bot.set_my_commands([
-        BotCommand("start", "▶️ بدء البوت / Start"),
-        BotCommand("help", "❓ المساعدة / Help"),
-        BotCommand("lang", "🌍 تغيير اللغة / Language"),
-    ])
+    await application.bot.set_my_commands([])
     removed = cleanup_stale_directories()
-    logger.info("Bot commands registered; stale temp directories removed=%s", removed)
+    logger.info("Bot commands cleared; stale temp directories removed=%s", removed)
     if application.job_queue:
         application.job_queue.run_repeating(_cleanup_temp_job, interval=3600, first=300, name="temp-cleanup")
         application.job_queue.run_repeating(_enqueue_scheduled_posts_job, interval=30, first=5, name="scheduled-post-dispatch")
