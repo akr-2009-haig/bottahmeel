@@ -1,4 +1,5 @@
 import logging
+import os
 from bot.app.bootstrap import bootstrap_application
 from bot.app.logging import configure_logging
 from bot.config import RuntimeMode, load_settings
@@ -38,14 +39,26 @@ def main():
 
     # 🔥 Webhook mode
     if settings.mode is RuntimeMode.WEBHOOK:
+        runtime_port = settings.port
+        port_from_env = os.environ.get("PORT", "").strip()
+        if port_from_env:
+            try:
+                runtime_port = int(port_from_env)
+            except ValueError:
+                logger.warning(
+                    "Invalid PORT value %r; falling back to settings.port=%s",
+                    port_from_env,
+                    settings.port,
+                )
+
         logger.info(
             "Starting FastAPI webhook server on %s:%s path=%s",
             settings.listen_host,
-            settings.port,
+            runtime_port,
             settings.webhook_path,
         )
         webhook_app = create_webhook_app(application=app, settings=settings)
-        uvicorn.run(webhook_app, host=settings.listen_host, port=settings.port)
+        uvicorn.run(webhook_app, host=settings.listen_host, port=runtime_port)
         return
 
     # 🔧 Polling fallback
