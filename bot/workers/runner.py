@@ -444,13 +444,21 @@ async def _process_job(bot: Bot, job) -> dict:
     raise RuntimeError(f"Unsupported job type: {job.job_type}")
 
 
-async def _worker_loop() -> None:
+async def run_database_worker_loop(
+    *,
+    stop_event: asyncio.Event | None = None,
+    worker_name: str | None = None,
+) -> None:
     settings = load_settings()
     bot = _get_worker_bot()
     cleanup_stale_directories()
     recovery_check_interval = min(max(settings.worker_poll_interval, 5.0), 30.0)
     next_recovery_check = 0.0
+    effective_worker_name = worker_name or settings.worker_name
     while True:
+        if stop_event is not None and stop_event.is_set():
+            logger.info("Stopping embedded database worker loop worker=%s", effective_worker_name)
+            return
         loop_time = asyncio.get_running_loop().time()
         if loop_time >= next_recovery_check:
             recovered = recover_stale_processing_jobs(lock_timeout_seconds=settings.job_lock_timeout_seconds)
@@ -462,19 +470,19 @@ async def _worker_loop() -> None:
                     recovered["failed"],
                 )
             next_recovery_check = loop_time + recovery_check_interval
-        job = claim_next_job(settings.worker_name)
+        job = claim_next_job(effective_worker_name)
         if not job:
             await asyncio.sleep(settings.worker_poll_interval)
             continue
         try:
             result = await _process_job(bot, job)
             complete_job(job.id, result)
-            logger.info("Completed database-backed job %s via worker=%s", job.id, settings.worker_name)
+            logger.info("Completed database-backed job %s via worker=%s", job.id, effective_worker_name)
         except Exception as exc:
             logger.exception(
                 "Database-backed job id=%s worker=%s attempt=%s/%s failed: %s",
                 job.id,
-                settings.worker_name,
+                effective_worker_name,
                 job.attempts,
                 job.max_attempts,
                 exc,
@@ -497,6 +505,10 @@ async def _worker_loop() -> None:
                     delay_seconds=_retry_delay(job.attempts),
                 )
             await asyncio.sleep(settings.worker_poll_interval)
+
+
+async def _worker_loop() -> None:
+    await run_database_worker_loop()
 
 
 def _run_job_once(job_id: int, *, task_id: str | None, worker_name: str) -> dict:
