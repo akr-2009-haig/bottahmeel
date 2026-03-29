@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from contextlib import asynccontextmanager
 from typing import Callable
@@ -56,7 +57,10 @@ def create_webhook_app(
             try:
                 if telegram_application is None:
                     logger.info("Bootstrapping Telegram application for webhook mode")
-                    telegram_application = await asyncio.to_thread(application_factory)
+                    if inspect.iscoroutinefunction(application_factory):
+                        telegram_application = await application_factory()
+                    else:
+                        telegram_application = await asyncio.to_thread(application_factory)
 
                 logger.info("Initializing Telegram application for webhook mode")
                 await telegram_application.initialize()

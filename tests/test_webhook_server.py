@@ -1,4 +1,3 @@
-import time
 import unittest
 from threading import Event
 from unittest.mock import AsyncMock, MagicMock
@@ -71,8 +70,9 @@ class WebhookServerTests(unittest.TestCase):
     def test_returns_503_until_webhook_runtime_finishes_initializing(self):
         settings = self._settings(disable_auto_webhook_set=True, queue_backend="redis", redis_url="redis://localhost:6379/0")
         release_factory = Event()
+        initialized = Event()
         fake_application = MagicMock()
-        fake_application.initialize = AsyncMock()
+        fake_application.initialize = AsyncMock(side_effect=lambda: initialized.set())
         fake_application.start = AsyncMock()
         fake_application.stop = AsyncMock()
         fake_application.shutdown = AsyncMock()
@@ -92,10 +92,7 @@ class WebhookServerTests(unittest.TestCase):
             self.assertEqual(response.text, "Webhook runtime is starting")
 
             release_factory.set()
-
-            deadline = time.time() + 2
-            while time.time() < deadline and not fake_application.initialize.await_count:
-                time.sleep(0.01)
+            self.assertTrue(initialized.wait(timeout=2))
 
         fake_application.initialize.assert_awaited_once()
         fake_application.start.assert_awaited_once()
