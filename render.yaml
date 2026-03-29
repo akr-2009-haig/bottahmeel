@@ -2,7 +2,7 @@ services:
   - type: web
     name: karar-bot-webhook
     runtime: python
-    plan: basic 
+    plan: starter
     buildCommand: pip install --upgrade pip && pip install -r requirements.txt
     startCommand: python run_bot.py
     autoDeploy: true
