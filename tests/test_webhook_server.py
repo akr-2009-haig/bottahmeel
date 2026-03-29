@@ -53,6 +53,16 @@ class WebhookServerTests(unittest.TestCase):
             "https://example.com/telegram/webhook",
         )
 
+    def test_appends_webhook_path_when_full_webhook_url_has_no_path(self):
+        settings = self._settings(
+            webhook_url="https://example.com",
+            webhook_full_url="https://example.com",
+        )
+        self.assertEqual(
+            _build_webhook_registration_url(settings),
+            "https://example.com/telegram/webhook",
+        )
+
     def test_avoids_duplicate_path_when_base_url_already_contains_path(self):
         settings = self._settings(webhook_url="https://example.com/telegram/webhook")
         self.assertEqual(
