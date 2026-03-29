@@ -36,8 +36,6 @@ def main():
             "to harden Telegram webhook intake."
         )
 
-    app = bootstrap_application()
-
     # 🔥 Webhook mode
     if settings.mode is RuntimeMode.WEBHOOK:
         try:
@@ -56,9 +54,14 @@ def main():
             runtime_port,
             settings.webhook_path,
         )
-        webhook_app = create_webhook_app(application=app, settings=settings)
+        webhook_app = create_webhook_app(
+            settings=settings,
+            application_factory=bootstrap_application,
+        )
         uvicorn.run(webhook_app, host=settings.listen_host, port=runtime_port)
         return
+
+    app = bootstrap_application()
 
     # 🔧 Polling fallback
     logger.info("Starting polling bot")
