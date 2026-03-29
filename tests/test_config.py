@@ -79,3 +79,14 @@ class SettingsTests(unittest.TestCase):
             settings = load_settings()
             self.assertEqual(settings.queue_backend, "redis")
             settings.validate_for_mode()
+
+    def test_port_reads_from_port_environment_variable(self):
+        with patch.dict(os.environ, {
+            "BOT_MODE": RuntimeMode.WEBHOOK.value,
+            "TELEGRAM_BOT_TOKEN": "token",
+            "DATABASE_URL": "sqlite:///test.db",
+            "WEBHOOK_URL": "https://example.com",
+            "PORT": "9090",
+        }, clear=False):
+            settings = load_settings()
+            self.assertEqual(settings.port, 9090)
