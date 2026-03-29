@@ -5,6 +5,7 @@ import inspect
 import logging
 from contextlib import asynccontextmanager
 from typing import Callable
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 from telegram import Update
@@ -17,7 +18,12 @@ logger = logging.getLogger(__name__)
 
 def _build_webhook_registration_url(settings: AppSettings) -> str:
     if settings.webhook_full_url:
-        return settings.webhook_full_url.rstrip("/")
+        full_url = settings.webhook_full_url.rstrip("/")
+        parsed_full_url = urlparse(full_url)
+        normalized_path = settings.webhook_path if settings.webhook_path.startswith("/") else f"/{settings.webhook_path}"
+        if parsed_full_url.path in {"", "/"}:
+            return f"{full_url}{normalized_path}"
+        return full_url
 
     base_url = settings.webhook_url.rstrip("/")
     webhook_path = settings.webhook_path if settings.webhook_path.startswith("/") else f"/{settings.webhook_path}"
