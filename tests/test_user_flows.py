@@ -1,4 +1,5 @@
 import unittest
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -103,6 +104,54 @@ class UserFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["reply_markup"].inline_keyboard[1][0].text, "🔊 : بصمة صوتية")
         self.assertEqual(kwargs["reply_markup"].inline_keyboard[1][1].text, "🎶 : ملف صوتي")
         self.assertEqual(len(context.user_data["pending_downloads"]), 1)
+        db.close.assert_called_once()
+
+    async def test_message_handler_falls_back_to_direct_youtube_enqueue_when_preview_times_out(self):
+        db_user = SimpleNamespace(id=21, status=user_handler.UserStatus.ACTIVE, language_code="ar", is_admin=False)
+        db = _db_with_user(db_user)
+        wait_msg = SimpleNamespace(message_id=91, edit_text=AsyncMock())
+        message = SimpleNamespace(
+            text="https://youtu.be/slow123",
+            reply_photo=AsyncMock(),
+            reply_text=AsyncMock(return_value=wait_msg),
+        )
+        update = SimpleNamespace(
+            message=message,
+            effective_user=SimpleNamespace(id=101, username="tester", first_name="Test", last_name="", language_code="ar"),
+            effective_chat=SimpleNamespace(id=701),
+        )
+        context = SimpleNamespace(
+            bot=SimpleNamespace(get_me=AsyncMock(return_value=SimpleNamespace(username="UnitBot")), send_chat_action=AsyncMock()),
+            user_data={},
+            bot_data={},
+        )
+
+        with (
+            patch.object(user_handler, "SessionLocal", return_value=db),
+            patch.object(user_handler, "get_setting", side_effect=_settings_side_effect({
+                "subscription_enabled": "false",
+                "youtube_enabled": "true",
+                "downloading_message": "جارٍ التحميل",
+            })),
+            patch.object(user_handler, "get_reply_button_response", return_value=None),
+            patch.object(user_handler, "check_download_rate_limit", return_value=(True, 0)),
+            patch.object(user_handler, "extract_media_info", new=AsyncMock(side_effect=asyncio.TimeoutError)),
+            patch.object(user_handler.DownloadService, "enqueue_download", return_value=777) as enqueue_download,
+        ):
+            await user_handler.message_handler(update, context)
+
+        message.reply_photo.assert_not_awaited()
+        message.reply_text.assert_awaited_once_with("جارٍ التحميل")
+        enqueue_download.assert_called_once_with(
+            user_id=21,
+            chat_id=701,
+            url="https://youtu.be/slow123",
+            platform="youtube",
+            lang="ar",
+            status_message_id=91,
+            download_mode="default",
+            caption_override="@UnitBot",
+        )
         db.close.assert_called_once()
 
     async def test_message_handler_enqueues_default_enabled_platform_without_admin_override(self):
