@@ -308,6 +308,7 @@ async def sub3_add_limit_menu(query, context: ContextTypes.DEFAULT_TYPE):
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("✏️ إدخال عدد المشتركين", callback_data="sub3_input_limit_new")],
         [InlineKeyboardButton("♾ بدون حد",              callback_data="sub3_limit_no_limit")],
+        [InlineKeyboardButton("✅ حفظ العدد",             callback_data="sub3_limit_save")],
         [InlineKeyboardButton("❌ إلغاء العملية",        callback_data="sub3_add_settings")],
         *_footer("sub3_add_settings"),
     ])
@@ -325,6 +326,8 @@ async def sub3_add_duration_menu(query, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📅 شهر",          callback_data="sub3_dur_month")],
         [InlineKeyboardButton("📆 تاريخ محدد",   callback_data="sub3_dur_date")],
         [InlineKeyboardButton("♾ دائم",          callback_data="sub3_dur_permanent")],
+        [InlineKeyboardButton("✅ حفظ المدة",     callback_data="sub3_dur_save")],
+        [InlineKeyboardButton("❌ إلغاء العملية", callback_data="sub3_add_settings")],
         *_footer("sub3_add_settings"),
     ])
     await query.edit_message_text(
@@ -853,6 +856,7 @@ async def sub3_backup(query, context: ContextTypes.DEFAULT_TYPE):
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ إضافة جهة احتياطية", callback_data="sub3_backup_add")],
         [InlineKeyboardButton("📋 عرض الجهات الاحتياطية", callback_data="sub3_backup_list")],
+        [InlineKeyboardButton("🗑 حذف جهة احتياطية",      callback_data="sub3_backup_delete")],
         [InlineKeyboardButton("🔄 تحديث القائمة",         callback_data="sub3_backup_refresh")],
         *_footer("sub3_main"),
     ])
@@ -997,6 +1001,7 @@ async def sub3_edit_btns(query, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("➕ إضافة زر",        callback_data="sub3_btn_add")],
         [InlineKeyboardButton("✏️ تعديل زر",        callback_data="sub3_btn_edit")],
         [InlineKeyboardButton("🗑 حذف زر",          callback_data="sub3_btn_delete")],
+        [InlineKeyboardButton("🔄 ترتيب الأزرار",    callback_data="sub3_btn_reorder_start")],
         [InlineKeyboardButton("💾 حفظ التعديل",     callback_data="sub3_btn_save")],
         [InlineKeyboardButton("❌ إلغاء العملية",   callback_data="sub3_settings_main")],
         *_footer("sub3_settings_main"),
@@ -1107,7 +1112,12 @@ async def sub3_no_perms(query, context: ContextTypes.DEFAULT_TYPE):
         db = SessionLocal()
         try:
             channels = db.query(SubscriptionChannel).filter_by(is_backup=False, is_active=True).all()
-            ids = [ch.id for ch in channels]
+            ids = []
+            for ch in channels:
+                identifier = ch.username or str(ch.chat_id)
+                result = await _do_check_entity(context.bot, identifier)
+                if not result["ok"]:
+                    ids.append(ch.id)
         finally:
             db.close()
         context.user_data["sub3_no_perms_ids"] = ids
@@ -1241,17 +1251,20 @@ async def _render_btns_editor(query_or_update, context: ContextTypes.DEFAULT_TYP
         f"<code>{lines or 'لا توجد أزرار بعد.'}</code>\n\n"
         "اختر الإجراء:"
     )
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ إضافة زر جديد",   callback_data="sub3_btn_add_start")],
-        *([
+    rows = [[InlineKeyboardButton("➕ إضافة زر جديد", callback_data="sub3_btn_add_start")]]
+    if buttons:
+        rows.append([InlineKeyboardButton("🔄 ترتيب الأزرار", callback_data="sub3_btn_reorder_start")])
+        rows.extend([
             [InlineKeyboardButton(f"🗑 حذف الزر {i}", callback_data=f"sub3_btn_del_{i-1}")]
             for i in range(1, len(buttons) + 1)
-        ] if buttons else []),
-        [InlineKeyboardButton("🗑 حذف جميع الأزرار", callback_data="sub3_btn_clear")] if buttons else [],
-        [InlineKeyboardButton("💾 حفظ التعديل",     callback_data="sub3_btn_save")],
-        [InlineKeyboardButton("❌ إلغاء",            callback_data="sub3_settings_main")],
+        ])
+        rows.append([InlineKeyboardButton("🗑 حذف جميع الأزرار", callback_data="sub3_btn_clear")])
+    rows.extend([
+        [InlineKeyboardButton("💾 حفظ التعديل", callback_data="sub3_btn_save")],
+        [InlineKeyboardButton("❌ إلغاء", callback_data="sub3_settings_main")],
         *_footer("sub3_settings_main"),
     ])
+    kb = InlineKeyboardMarkup(rows)
     if is_reply:
         await query_or_update.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
     else:
@@ -1385,6 +1398,14 @@ async def _sub3_dispatch_inner(query, context: ContextTypes.DEFAULT_TYPE, data: 
         await sub3_add_settings(query, context)
         return True
 
+    if data == "sub3_limit_save":
+        if "sub3_add_limit" in context.user_data:
+            await query.answer("✅ تم حفظ حد المشتركين بنجاح.", show_alert=True)
+            await sub3_add_settings(query, context)
+        else:
+            await query.answer("⚠️ لم يتم تحديد أي قيمة بعد.", show_alert=True)
+        return True
+
     if data == "sub3_add_duration_menu":
         await sub3_add_duration_menu(query, context)
         return True
@@ -1406,6 +1427,14 @@ async def _sub3_dispatch_inner(query, context: ContextTypes.DEFAULT_TYPE, data: 
             "📆 <b>إدخال تاريخ محدد</b>\n\nأرسل التاريخ المطلوب بصيغة: <code>YYYY-MM-DD</code>",
             reply_markup=kb, parse_mode="HTML",
         )
+        return True
+
+    if data == "sub3_dur_save":
+        if context.user_data.get("sub3_add_duration"):
+            await query.answer("✅ تم حفظ مدة الاشتراك بنجاح.", show_alert=True)
+            await sub3_add_settings(query, context)
+        else:
+            await query.answer("⚠️ لم يتم تحديد أي مدة بعد.", show_alert=True)
         return True
 
     if data == "sub3_add_confirm":
@@ -1597,6 +1626,11 @@ async def _sub3_dispatch_inner(query, context: ContextTypes.DEFAULT_TYPE, data: 
         await sub3_backup(query, context)
         return True
 
+    if data == "sub3_backup_delete":
+        context.user_data.setdefault("sub3_backup_idx", 0)
+        await sub3_list(query, context, is_backup=True)
+        return True
+
     if data == "sub3_backup_list":
         context.user_data.setdefault("sub3_backup_idx", 0)
         await sub3_list(query, context, is_backup=True)
@@ -1683,6 +1717,10 @@ async def _sub3_dispatch_inner(query, context: ContextTypes.DEFAULT_TYPE, data: 
         await _render_btns_editor(query, context, is_reply=False)
         return True
 
+    if data in ("sub3_btn_add", "sub3_btn_edit", "sub3_btn_delete"):
+        await _render_btns_editor(query, context, is_reply=False)
+        return True
+
     if data == "sub3_btn_add_start":
         context.user_data["waiting_for"] = "sub3_btn_label"
         kb = InlineKeyboardMarkup([
@@ -1694,6 +1732,11 @@ async def _sub3_dispatch_inner(query, context: ContextTypes.DEFAULT_TYPE, data: 
             "➕ <b>إضافة زر جديد</b>\n\nالخطوة 1/2: أرسل <b>نص الزر</b> (مثال: اشترك الآن).",
             reply_markup=kb, parse_mode="HTML",
         )
+        return True
+
+    if data == "sub3_btn_reorder_start":
+        await query.answer("ℹ️ لإعادة الترتيب: احذف الأزرار وأعد إضافتها بالترتيب المطلوب.", show_alert=True)
+        await _render_btns_editor(query, context, is_reply=False)
         return True
 
     if data.startswith("sub3_btn_del_"):
