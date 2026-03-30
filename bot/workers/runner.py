@@ -273,7 +273,7 @@ async def _process_download(bot: Bot, payload: dict) -> dict:
             )
             if saved_download_id:
                 tiktok_audio_markup = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🎵 تحميل الصوت", callback_data=f"ttaudio:{saved_download_id}")
+                    InlineKeyboardButton("🎵 تحميل مقطع صوتي", callback_data=f"ttaudio:{saved_download_id}")
                 ]])
         try:
             with open(filepath, "rb") as media_handle:

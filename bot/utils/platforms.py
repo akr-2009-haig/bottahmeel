@@ -202,6 +202,9 @@ YDL_BASE_OPTS = {
             'Chrome/120.0.0.0 Safari/537.36'
         ),
     },
+    'concurrent_fragment_downloads': 4,
+    'retries': 3,
+    'fragment_retries': 3,
 }
 
 PLATFORM_OPTS: dict = {
@@ -443,6 +446,7 @@ async def extract_media_info(url: str, platform: str = "unknown", *, requested_m
         "view_count": view_count,
         "filesize": info.get("filesize") or info.get("filesize_approx") or 0,
         "channel": uploader,
+        "channel_url": info.get("channel_url") or info.get("uploader_url") or "",
         "username": info.get("uploader_id") or username_hint,
         "display_name": display_name,
         "bio": info.get("description") or "",

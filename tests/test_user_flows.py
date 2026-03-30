@@ -141,7 +141,9 @@ class UserFlowTests(unittest.IsolatedAsyncioTestCase):
             await user_handler.message_handler(update, context)
 
         message.reply_photo.assert_not_awaited()
-        message.reply_text.assert_awaited_once_with("جارٍ التحميل")
+        self.assertEqual(message.reply_text.await_count, 2)
+        message.reply_text.assert_any_await("⏰┇يرجى الانتظار، يتم تحليل الرابط...")
+        message.reply_text.assert_any_await("جارٍ التحميل")
         enqueue_download.assert_called_once_with(
             user_id=21,
             chat_id=701,
