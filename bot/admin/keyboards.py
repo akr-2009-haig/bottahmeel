@@ -58,16 +58,58 @@ def users_menu_keyboard():
 
 def admins_menu_keyboard():
     buttons = [
-        [InlineKeyboardButton("➕ إضافة مشرف", callback_data="adm_admins_add"),
-         InlineKeyboardButton("📋 قائمة المشرفين", callback_data="adm_admins_list_0")],
-        [InlineKeyboardButton("⚙️ إدارة الصلاحيات", callback_data="adm_admins_perms"),
-         InlineKeyboardButton("📊 نشاط المشرفين", callback_data="adm_admins_activity")],
-        [InlineKeyboardButton("🚫 المشرفين المعطلين", callback_data="adm_admins_disabled"),
-         InlineKeyboardButton("🔍 البحث عن مشرف", callback_data="adm_admins_search")],
-        [InlineKeyboardButton("📥 تصدير القائمة", callback_data="adm_admins_export")],
-        [InlineKeyboardButton("🔙 رجوع", callback_data="adm_main")],
+        [InlineKeyboardButton("➕ إضافة مشرف", callback_data="admins_add_menu"),
+         InlineKeyboardButton("📋 قائمة المشرفين", callback_data="admins_list_0")],
+        [InlineKeyboardButton("⚙️ إدارة صلاحيات المشرفين", callback_data="admins_manage_perms"),
+         InlineKeyboardButton("📊 نشاط المشرفين", callback_data="admins_activity_0")],
+        [InlineKeyboardButton("🚫 المشرفين المعطلين", callback_data="admins_disabled_0"),
+         InlineKeyboardButton("🔍 البحث عن مشرف", callback_data="admins_search_menu")],
+        [InlineKeyboardButton("📥 تصدير قائمة المشرفين", callback_data="admins_export_menu")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data="adm_main"),
+         InlineKeyboardButton("🏠 الرئيسية", callback_data="adm_main")],
     ]
     return InlineKeyboardMarkup(buttons)
+
+
+def admin_add_menu_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🆔 إدخال ID المستخدم", callback_data="admins_add_by_id"),
+         InlineKeyboardButton("👤 اختيار مستخدم من قاعدة المستخدمين", callback_data="admins_add_select_user_0")],
+        [InlineKeyboardButton("⚙️ تحديد الصلاحيات", callback_data="admins_add_permissions"),
+         InlineKeyboardButton("📂 تحديد الأقسام المسموح بها", callback_data="admins_add_sections")],
+        [InlineKeyboardButton("✅ تأكيد إضافة المشرف", callback_data="admins_add_confirm")],
+        [InlineKeyboardButton("❌ إلغاء العملية", callback_data="admins_cancel_add")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data="adm_admins"),
+         InlineKeyboardButton("🏠 الرئيسية", callback_data="adm_main")],
+    ])
+
+
+def admin_sections_keyboard(selected: list[str]):
+    sections = [
+        ("users", "👥 قسم إدارة المستخدمين"),
+        ("admins", "👮 قسم إدارة المشرفين"),
+        ("subscription", "📢 قسم الاشتراك الإجباري"),
+        ("publish", "📡 قسم قنوات النشر"),
+        ("broadcast", "📣 قسم الإذاعة والإعلانات"),
+        ("scheduled", "🗓 قسم النشر المجدول"),
+        ("groups", "📂 قسم مجموعات القنوات"),
+        ("antiflood", "🛡 قسم منع الحظر"),
+        ("stats", "📊 قسم الإحصائيات"),
+        ("settings", "⚙️ قسم إعدادات البوت"),
+    ]
+    rows = []
+    for key, label in sections:
+        marker = "✅" if key in selected else "☑️"
+        rows.append([InlineKeyboardButton(f"{marker} {label}", callback_data=f"admins_toggle_section_{key}")])
+    rows.extend([
+        [InlineKeyboardButton("🔄 تحديد الكل", callback_data="admins_sections_select_all"),
+         InlineKeyboardButton("🧹 إلغاء تحديد الكل", callback_data="admins_sections_clear_all")],
+        [InlineKeyboardButton("✅ حفظ الأقسام", callback_data="admins_sections_save"),
+         InlineKeyboardButton("❌ إلغاء العملية", callback_data="admins_sections_cancel")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data="admins_add_menu"),
+         InlineKeyboardButton("🏠 الرئيسية", callback_data="adm_main")],
+    ])
+    return InlineKeyboardMarkup(rows)
 
 
 def subscription_menu_keyboard():
