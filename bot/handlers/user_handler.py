@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 BOT_OWNER_ID = int(os.environ.get("BOT_OWNER_ID", "0"))
 PENDING_DOWNLOADS_KEY = "pending_downloads"
 YOUTUBE_PREVIEW_TIMEOUT_SECONDS = 8
+SUB_CHANNELS_PAGE_SIZE = 7
 
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
@@ -81,9 +82,15 @@ def get_enabled_languages():
 def build_lang_keyboard(current_lang: str = "ar"):
     """Build inline keyboard from admin-enabled languages (2 per row)."""
     langs = get_enabled_languages()
+    preferred_labels = {
+        "ru": "Russian",
+        "en": "English",
+        "ar": "Arabic",
+    }
     btns = []
     for lang in langs:
-        label = f"{'✅ ' if lang.code == current_lang else ''}{lang.flag} {lang.name}"
+        base_label = preferred_labels.get(lang.code, f"{lang.flag} {lang.name}".strip())
+        label = f"{'✅ ' if lang.code == current_lang else ''}{base_label}"
         btns.append(InlineKeyboardButton(label, callback_data=f"lang_{lang.code}"))
 
     rows = [btns[i:i+2] for i in range(0, len(btns), 2)]
@@ -135,9 +142,17 @@ async def check_subscriptions(user_id: int, bot) -> tuple[bool, list]:
         db.close()
 
 
-def build_subscription_keyboard(channels: list, lang: str) -> InlineKeyboardMarkup:
+def build_subscription_keyboard(channels: list, lang: str, *, page: int = 0) -> InlineKeyboardMarkup:
+    total = len(channels)
+    page = max(page, 0)
+    pages = max((total + SUB_CHANNELS_PAGE_SIZE - 1) // SUB_CHANNELS_PAGE_SIZE, 1)
+    page = min(page, pages - 1)
+    start = page * SUB_CHANNELS_PAGE_SIZE
+    end = start + SUB_CHANNELS_PAGE_SIZE
+    visible_channels = channels[start:end]
+
     keyboard = []
-    for ch in channels:
+    for ch in visible_channels:
         title = ch.title or get_string("channel_fallback_title", lang, id=ch.id)
         link = ch.invite_link or (f"https://t.me/{ch.username}" if ch.username else "#")
         keyboard.append([InlineKeyboardButton(f"📢 {title}", url=link)])
@@ -152,6 +167,15 @@ def build_subscription_keyboard(channels: list, lang: str) -> InlineKeyboardMark
         url = str((button or {}).get("url", "")).strip()
         if label and url:
             keyboard.append([InlineKeyboardButton(label, url=url)])
+
+    if total > SUB_CHANNELS_PAGE_SIZE:
+        nav_row = []
+        if page > 0:
+            nav_row.append(InlineKeyboardButton(get_string("sub_prev", lang), callback_data=f"sub_page:{page-1}"))
+        if page < pages - 1:
+            nav_row.append(InlineKeyboardButton(get_string("sub_next", lang), callback_data=f"sub_page:{page+1}"))
+        if nav_row:
+            keyboard.append(nav_row)
 
     keyboard.append([InlineKeyboardButton(get_string("check_subscription", lang), callback_data="check_sub")])
     return InlineKeyboardMarkup(keyboard)
@@ -251,12 +275,16 @@ def _youtube_preview_text(info: dict, lang: str) -> str:
     title = info.get("title") or get_string("yt_unknown_title", lang)
     channel = info.get("channel") or get_string("yt_unknown_channel", lang)
     source_url = info.get("source_url") or info.get("url") or ""
+    channel_url = info.get("channel_url") or source_url
     if source_url:
         escaped_url = escape(source_url, quote=True)
         title = f'<a href="{escaped_url}">{escape(title)}</a>'
-        channel = f'<a href="{escaped_url}">{escape(channel)}</a>'
     else:
         title = escape(title)
+    if channel_url:
+        escaped_channel_url = escape(channel_url, quote=True)
+        channel = f'<a href="{escaped_channel_url}">{escape(channel)}</a>'
+    else:
         channel = escape(channel)
     duration = _format_duration(info.get("duration"))
     views = _format_compact_number(info.get("view_count"))
@@ -284,11 +312,11 @@ def _instagram_user_info_caption(info: dict, lang: str) -> str:
         "ig_user_info_caption",
         lang,
         username=info.get("username") or "",
-        display_name=info.get("display_name") or "",
-        post_count=info.get("post_count") or 0,
-        followers=info.get("followers") or 0,
-        following=info.get("following") or 0,
-        bio=bio,
+        display_name="",
+        post_count=0,
+        followers=0,
+        following=0,
+        bio=".",
     )
 
 
@@ -374,6 +402,14 @@ async def _send_youtube_preview(
     url: str,
     lang: str,
 ) -> None:
+    analyzing_message = await update.message.reply_text(get_string("yt_analyzing", lang))
+
+    async def _cleanup_analyzing_message():
+        try:
+            await analyzing_message.delete()
+        except Exception:
+            pass
+
     try:
         info = await asyncio.wait_for(
             extract_media_info(url, "youtube"),
@@ -391,6 +427,7 @@ async def _send_youtube_preview(
             lang=lang,
             caption_override=await _get_bot_signature(context),
         )
+        await _cleanup_analyzing_message()
         return
 
     if not info.get("ok"):
@@ -405,6 +442,7 @@ async def _send_youtube_preview(
             lang=lang,
             caption_override=await _get_bot_signature(context),
         )
+        await _cleanup_analyzing_message()
         return
     info = {**info, "source_url": url}
     token = _store_pending_download(context, {
@@ -423,6 +461,7 @@ async def _send_youtube_preview(
         )
     else:
         await update.message.reply_text(text, reply_markup=_youtube_keyboard(token, lang), parse_mode="HTML")
+    await _cleanup_analyzing_message()
 
 
 async def _send_instagram_profile_preview(update: Update, context: ContextTypes.DEFAULT_TYPE, *, url: str, lang: str) -> None:
@@ -512,6 +551,21 @@ async def _show_welcome(update, context, db_user, name: str, lang: str):
     await context.bot.send_message(chat_id, start_msg, reply_markup=main_markup)
     if extra_markup:
         await context.bot.send_message(chat_id, get_string("keyboard_placeholder", lang), reply_markup=extra_markup)
+
+
+async def _show_verified_intro(query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE, *, lang: str):
+    bot_name = get_setting("bot_name", "SaveEliteBot")
+    me = await context.bot.get_me()
+    add_btn_text = get_string("add_to_chat", lang)
+    add_button = InlineKeyboardMarkup([[
+        InlineKeyboardButton(add_btn_text, url=f"https://t.me/{me.username}?startgroup=true")
+    ]])
+    text = get_string("subscription_verified_intro", lang, bot_name=bot_name)
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text=text,
+        reply_markup=add_button,
+    )
 
 
 # ─── /help ────────────────────────────────────────────────────────────────────
@@ -606,6 +660,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 lang=lang,
                 download_mode=mode,
                 caption_override=pending.get("caption_override"),
+                waiting_text_override=(
+                    get_string("yt_preparing_audio", lang)
+                    if mode == "audio"
+                    else get_string("yt_preparing_fingerprint", lang)
+                ),
             )
             return
 
@@ -628,6 +687,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 lang=lang,
                 download_mode=f"video_{quality}",
                 caption_override=pending.get("caption_override"),
+                waiting_text_override=get_string("yt_preparing_video", lang),
             )
             return
 
@@ -696,12 +756,24 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             return
 
+        if data.startswith("sub_page:"):
+            _, page = data.split(":", 1)
+            page_num = int(page) if page.isdigit() else 0
+            is_subscribed, unsubscribed = await check_subscriptions(user.id, context.bot)
+            if is_subscribed:
+                await query.edit_message_reply_markup(reply_markup=None)
+                await query.answer(get_string("subscribed", lang), show_alert=True)
+                await _show_verified_intro(query, context, lang=lang)
+                return
+            await query.edit_message_reply_markup(reply_markup=build_subscription_keyboard(unsubscribed, lang, page=page_num))
+            return
+
         if data == "check_sub":
             is_subscribed, unsubscribed = await check_subscriptions(user.id, context.bot)
             if is_subscribed:
                 await query.edit_message_reply_markup(reply_markup=None)
-                name = get_user_name(user)
-                await _show_welcome(query, context, db_user, name, lang)
+                await query.answer(get_string("subscribed", lang), show_alert=True)
+                await _show_verified_intro(query, context, lang=lang)
             else:
                 await query.answer(get_string("not_subscribed", lang), show_alert=True)
                 await query.edit_message_reply_markup(reply_markup=build_subscription_keyboard(unsubscribed, lang))
@@ -772,7 +844,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             is_subscribed, unsubscribed = await check_subscriptions(user.id, context.bot)
             if not is_subscribed:
                 await update.message.reply_text(
-                    get_lang_setting("subscription_message", lang, get_string("subscribe_required", lang)),
+                    get_string("subscribe_first_warning", lang),
                     reply_markup=build_subscription_keyboard(unsubscribed, lang)
                 )
                 return
