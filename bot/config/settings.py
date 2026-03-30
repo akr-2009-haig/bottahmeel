@@ -62,11 +62,7 @@ def load_settings() -> AppSettings:
     webhook_full_url = os.environ.get("WEBHOOK_FULL_URL", "").strip()
     mode_raw = os.environ.get("BOT_MODE", "").strip().lower()
     if not mode_raw:
-        mode_raw = (
-            RuntimeMode.WEBHOOK.value
-            if os.environ.get("PORT", "").strip() and (webhook_full_url or webhook_url)
-            else RuntimeMode.POLLING.value
-        )
+        mode_raw = RuntimeMode.WEBHOOK.value if (webhook_full_url or webhook_url) else RuntimeMode.POLLING.value
     try:
         mode = RuntimeMode(mode_raw)
     except ValueError as exc:

@@ -6,20 +6,28 @@ services:
     env_file:
       - .env
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
-      - "8080:8080"
-      - "8081:8081"
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8081:8081"
+    volumes:
+      - bot_temp:/tmp/karar-bot
     healthcheck:
-      test:
-        - CMD
-        - python
-        - scripts/healthcheck.py
+      test: ["CMD", "python", "scripts/healthcheck.py"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 20s
+    mem_limit: 1g
+    cpus: "0.75"
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
 
   worker:
     build: .
@@ -28,26 +36,60 @@ services:
     env_file:
       - .env
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - bot_temp:/tmp/karar-bot
+    mem_limit: 3g
+    cpus: "1.25"
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
 
   db:
-    image: postgres:16
+    image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: karar_bot
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: ${POSTGRES_DB:-karar_bot}
+      POSTGRES_USER: ${POSTGRES_USER:-karar}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-karar_change_me}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-karar} -d ${POSTGRES_DB:-karar_bot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    mem_limit: 2g
+    cpus: "0.5"
 
   redis:
-    image: redis:7
+    image: redis:7-alpine
     restart: unless-stopped
-    ports:
-      - "6379:6379"
+    command: >
+      redis-server
+      --appendonly yes
+      --save 60 1000
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --loglevel warning
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    mem_limit: 1g
+    cpus: "0.25"
 
 volumes:
   postgres_data:
+  redis_data:
+  bot_temp:
