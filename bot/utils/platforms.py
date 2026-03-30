@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 
 import yt_dlp
 
+from bot.config import load_settings
 from bot.temp import create_temp_download_dir
 
 logger = logging.getLogger(__name__)
@@ -246,6 +247,37 @@ PLATFORM_OPTS: dict = {
 }
 
 
+def _fallback_media_type(*, requested_mode: str) -> str:
+    if requested_mode in {"audio", "fingerprint"}:
+        return "audio"
+    return "video"
+
+
+def _select_best_download_file(tmp_dir: str, *, requested_mode: str) -> Optional[str]:
+    files = []
+    for file_name in os.listdir(tmp_dir):
+        if file_name.endswith('.part'):
+            continue
+        full_path = os.path.join(tmp_dir, file_name)
+        if os.path.isfile(full_path):
+            files.append(full_path)
+    if not files:
+        return None
+
+    preferred_exts = AUDIO_EXTS if requested_mode in {"audio", "fingerprint"} else VIDEO_EXTS | IMAGE_EXTS
+
+    def _score(path: str) -> tuple[int, int, float, str]:
+        ext = os.path.splitext(path)[1].lstrip('.').lower()
+        return (
+            0 if ext in preferred_exts else 1,
+            -os.path.getsize(path),
+            -os.path.getmtime(path),
+            path,
+        )
+
+    return sorted(files, key=_score)[0]
+
+
 async def download_media(url: str, platform: str = "unknown", *, download_mode: str = "default") -> Tuple[Optional[str], str, str]:
     tmp_dir = create_temp_download_dir(platform)
     outtmpl = os.path.join(tmp_dir, '%(id)s.%(ext)s')
@@ -285,16 +317,12 @@ async def download_media(url: str, platform: str = "unknown", *, download_mode: 
 
             filepath = os.path.join(tmp_dir, f"{video_id}.{ext}")
             if not os.path.exists(filepath):
-                files = [f for f in os.listdir(tmp_dir) if not f.endswith('.part')]
-                if files:
-                    if download_mode == "audio":
-                        files = sorted(files, key=lambda name: (0 if name.lower().endswith(".mp3") else 1, name))
-                    else:
-                        files = sorted(files)
-                    filepath = os.path.join(tmp_dir, files[0])
+                selected_file = _select_best_download_file(tmp_dir, requested_mode=download_mode)
+                if selected_file:
+                    filepath = selected_file
                     ext = filepath.rsplit('.', 1)[-1].lower()
                 else:
-                    return None, "video", title
+                    return None, _fallback_media_type(requested_mode=download_mode), "generic"
 
             ext_lower = ext.lower()
             media_type = _guess_media_type({"ext": ext_lower}, requested_mode=download_mode)
@@ -304,10 +332,14 @@ async def download_media(url: str, platform: str = "unknown", *, download_mode: 
             return filepath, media_type, title
 
     try:
-        return await loop.run_in_executor(None, _download)
+        timeout_seconds = max(load_settings().download_timeout_seconds, 10)
+        return await asyncio.wait_for(loop.run_in_executor(None, _download), timeout=timeout_seconds)
+    except asyncio.TimeoutError:
+        logger.error("[%s] Download timed out for url=%s", platform, url)
+        return None, _fallback_media_type(requested_mode=download_mode), "timeout"
     except Exception as e:
-        logger.error(f"[{platform}] Download error: {e}")
-        return None, "video", ""
+        logger.error("[%s] Download error: %s", platform, e)
+        return None, _fallback_media_type(requested_mode=download_mode), classify_extraction_error(e)
 
 
 def is_instagram_profile_url(url: str) -> bool:

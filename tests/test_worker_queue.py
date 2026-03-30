@@ -326,6 +326,80 @@ class WorkerQueueTests(unittest.IsolatedAsyncioTestCase):
             text="❌ We could not complete this request after several attempts. You can resend the link to try again.",
         )
 
+    async def test_failed_download_records_requested_media_type(self):
+        db = self._session()
+        try:
+            user = User(telegram_id=333001, first_name="Audio", language_code="en", status=UserStatus.ACTIVE)
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            user_id = user.id
+        finally:
+            db.close()
+
+        job_id = DownloadService.enqueue_download(
+            user_id=user_id,
+            chat_id=404,
+            url="https://youtube.com/watch?v=abc123",
+            platform="youtube",
+            lang="en",
+            status_message_id=12,
+            download_mode="audio",
+        )
+        job = claim_next_job("failed-media-type-worker")
+        self.assertEqual(job.id, job_id)
+
+        bot = AsyncMock()
+        with patch("bot.workers.runner.download_media", new=AsyncMock(return_value=(None, "audio", "generic"))):
+            result = await _process_job(bot, job)
+
+        self.assertEqual(result["status"], "failed")
+        db = self._session()
+        try:
+            download = db.query(Download).filter_by(user_id=user_id, success=False).order_by(Download.id.desc()).first()
+            self.assertIsNotNone(download)
+            self.assertEqual(download.media_type, "audio")
+        finally:
+            db.close()
+
+    async def test_large_download_is_rejected_before_upload(self):
+        db = self._session()
+        try:
+            user = User(telegram_id=333002, first_name="Large", language_code="en", status=UserStatus.ACTIVE)
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            user_id = user.id
+        finally:
+            db.close()
+
+        oversized_dir = os.path.join(self.temp_dir.name, "downloads", "oversized")
+        os.makedirs(oversized_dir, exist_ok=True)
+        oversized_path = os.path.join(oversized_dir, "video.mp4")
+        with open(oversized_path, "wb") as handle:
+            handle.write(b"0" * (2 * 1024 * 1024))
+
+        with patch.dict(os.environ, {"MAX_UPLOAD_FILE_SIZE_MB": "0"}, clear=False):
+            load_settings.cache_clear()
+            job_id = DownloadService.enqueue_download(
+                user_id=user_id,
+                chat_id=405,
+                url="https://youtube.com/watch?v=abc123",
+                platform="youtube",
+                lang="en",
+                status_message_id=13,
+            )
+            job = claim_next_job("large-file-worker")
+            self.assertEqual(job.id, job_id)
+
+            bot = AsyncMock()
+            with patch("bot.workers.runner.download_media", new=AsyncMock(return_value=(oversized_path, "video", ""))):
+                result = await _process_job(bot, job)
+
+        self.assertEqual(result["reason"], "file_too_large")
+        bot.send_video.assert_not_awaited()
+        bot.edit_message_text.assert_awaited()
+
     def test_claim_job_for_processing_is_idempotent_for_same_task_id(self):
         db = self._session()
         try:

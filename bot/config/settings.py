@@ -42,6 +42,8 @@ class AppSettings:
     rate_limit_requests_per_window: int
     rate_limit_window_seconds: int
     rate_limit_block_seconds: int
+    download_timeout_seconds: int
+    max_upload_file_size_mb: int
 
     def validate_for_mode(self) -> None:
         if not self.bot_token:
@@ -112,4 +114,6 @@ def load_settings() -> AppSettings:
         rate_limit_requests_per_window=int(os.environ.get("RATE_LIMIT_REQUESTS_PER_WINDOW", "4").strip() or "4"),
         rate_limit_window_seconds=int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "1800").strip() or "1800"),
         rate_limit_block_seconds=int(os.environ.get("RATE_LIMIT_BLOCK_SECONDS", "1800").strip() or "1800"),
+        download_timeout_seconds=int(os.environ.get("DOWNLOAD_TIMEOUT_SECONDS", "300").strip() or "300"),
+        max_upload_file_size_mb=int(os.environ.get("MAX_UPLOAD_FILE_SIZE_MB", "49").strip() or "49"),
     )

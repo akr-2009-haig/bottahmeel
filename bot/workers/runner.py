@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import calendar
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 
 from celery.exceptions import Retry
@@ -116,6 +117,42 @@ async def _notify_download_job_state(bot: Bot, payload: dict, *, state: str, del
     )
 
 
+def _download_failure_message(lang: str, reason: str) -> str:
+    if reason == "private":
+        key = "download_private_error"
+        defaults = {
+            "ar": "❌ هذا المحتوى خاص أو يتطلب تسجيل الدخول.",
+            "en": "❌ This content is private or requires login.",
+            "ru": "❌ Этот контент приватный или требует входа.",
+        }
+    elif reason == "expired":
+        key = "download_expired_error"
+        defaults = {
+            "ar": "❌ هذا الرابط لم يعد متاحاً أو انتهت صلاحيته.",
+            "en": "❌ This link is no longer available or has expired.",
+            "ru": "❌ Эта ссылка больше недоступна или срок действия истёк.",
+        }
+    elif reason == "timeout":
+        key = "download_timeout_error"
+        defaults = {
+            "ar": "⏱️ انتهت مهلة التحميل. حاول مرة أخرى خلال دقائق.",
+            "en": "⏱️ Download timed out. Please try again in a few minutes.",
+            "ru": "⏱️ Время ожидания загрузки истекло. Попробуйте снова через несколько минут.",
+        }
+    elif reason == "file_too_large":
+        key = "download_too_large_error"
+        defaults = {
+            "ar": "📦 الملف كبير جداً للإرسال عبر تيليجرام بهذا الإعداد.",
+            "en": "📦 The file is too large to send via Telegram with current settings.",
+            "ru": "📦 Файл слишком большой для отправки через Telegram с текущими настройками.",
+        }
+    else:
+        key = "error_message"
+        defaults = {"ar": get_string("error", "ar"), "en": get_string("error", "en"), "ru": get_string("error", "ru")}
+    default_text = defaults.get(lang, defaults[DEFAULT_STATUS_LANGUAGE])
+    return get_setting(f"{key}_{lang}", get_setting(key, default_text))
+
+
 def _build_inline_keyboard(buttons_json) -> InlineKeyboardMarkup | None:
     if not buttons_json:
         return None
@@ -176,12 +213,39 @@ async def _process_download(bot: Bot, payload: dict) -> dict:
             raise RuntimeError(f"User {user_id} not found")
         await _notify_download_job_state(bot, payload, state="processing")
         await bot.send_chat_action(chat_id=chat_id, action=get_setting("activity_status", "upload_video"))
-        filepath, media_type, _title = await download_media(url, platform, download_mode=download_mode)
+        filepath, media_type, error_kind = await download_media(url, platform, download_mode=download_mode)
         if not filepath:
-            error_text = get_setting(f"error_message_{lang}", get_setting("error_message", get_string("error", lang)))
+            error_text = _download_failure_message(lang, error_kind or "generic")
             await _safe_edit_message(bot, chat_id, status_message_id, error_text)
-            DownloadService.record_download_result(user_id=user_id, platform=platform, url=url, media_type="video", success=False)
+            DownloadService.record_download_result(
+                user_id=user_id,
+                platform=platform,
+                url=url,
+                media_type=media_type or "video",
+                success=False,
+            )
             return {"status": "failed"}
+
+        max_size_bytes = max(load_settings().max_upload_file_size_mb, 1) * 1024 * 1024
+        file_size = os.path.getsize(filepath)
+        if file_size > max_size_bytes:
+            logger.warning(
+                "Skipping send: file too large user_id=%s platform=%s size=%s max=%s",
+                user_id,
+                platform,
+                file_size,
+                max_size_bytes,
+            )
+            await _safe_edit_message(bot, chat_id, status_message_id, _download_failure_message(lang, "file_too_large"))
+            DownloadService.record_download_result(
+                user_id=user_id,
+                platform=platform,
+                url=url,
+                media_type=media_type,
+                success=False,
+            )
+            cleanup_path(filepath)
+            return {"status": "failed", "reason": "file_too_large"}
 
         caption = caption_override or DownloadService.build_caption(
             media_type=media_type,
