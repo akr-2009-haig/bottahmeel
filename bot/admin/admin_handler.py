@@ -43,7 +43,8 @@ from .keyboards import (
     speed_keyboard, delay_keyboard, retry_keyboard, activity_status_keyboard,
     platforms_keyboard, sub_settings_keyboard, messages_settings_keyboard,
     add_sub_type_keyboard, broadcast_compose_keyboard, repeat_type_keyboard,
-    auto_delete_keyboard, admin_perms_keyboard
+    auto_delete_keyboard, admin_perms_keyboard, admin_add_menu_keyboard,
+    admin_sections_keyboard
 )
 from .sub_handler import dispatch_sub_callback, sub3_handle_message, sub3_main
 from .ui_handler import dispatch_ui_callback, ui_handle_message
@@ -51,6 +52,52 @@ from .ui_handler import dispatch_ui_callback, ui_handle_message
 logger = logging.getLogger(__name__)
 
 BOT_OWNER_ID = int(os.environ.get("BOT_OWNER_ID", "0"))
+ADMIN_SECTIONS = {
+    "users": "👥 قسم إدارة المستخدمين",
+    "admins": "👮 قسم إدارة المشرفين",
+    "subscription": "📢 قسم الاشتراك الإجباري",
+    "publish": "📡 قسم قنوات النشر",
+    "broadcast": "📣 قسم الإذاعة والإعلانات",
+    "scheduled": "🗓 قسم النشر المجدول",
+    "groups": "📂 قسم مجموعات القنوات",
+    "antiflood": "🛡 قسم منع الحظر",
+    "stats": "📊 قسم الإحصائيات",
+    "settings": "⚙️ قسم إعدادات البوت",
+}
+
+
+def _admins_flow(context) -> dict:
+    flow = context.user_data.setdefault("admins_flow", {})
+    flow.setdefault("selected_admin_id", None)
+    flow.setdefault("selected_permissions", [])
+    flow.setdefault("selected_sections", [])
+    flow.setdefault("current_page", 0)
+    flow.setdefault("last_search_query", "")
+    flow.setdefault("current_filter", "all")
+    return flow
+
+
+def _permission_section_mismatch(perms: list[str], sections: list[str]) -> bool:
+    if not perms or not sections:
+        return False
+    map_perm_to_section = {
+        "manage_users": "users",
+        "add_admins": "admins",
+        "delete_admins": "admins",
+        "manage_subscription": "subscription",
+        "manage_channels": "publish",
+        "manage_broadcast": "broadcast",
+        "manage_scheduled": "scheduled",
+        "manage_groups": "groups",
+        "manage_antiflood": "antiflood",
+        "view_stats": "stats",
+        "manage_settings": "settings",
+    }
+    for perm in perms:
+        section = map_perm_to_section.get(perm)
+        if section and section not in sections:
+            return True
+    return False
 
 
 def is_owner(user_id: int) -> bool:
@@ -209,10 +256,141 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         elif data == "adm_admins":
+            _admins_flow(context)
             await query.edit_message_text(
-                "👮 **إدارة المشرفين**\n\nاختر الإجراء:",
+                "👮 **قسم إدارة المشرفين**\n\n"
+                "من هنا يمكنك إضافة مشرفين، إدارة صلاحياتهم، متابعة نشاطهم، "
+                "البحث عنهم، تعطيلهم أو تصدير قوائمهم.\n\nاختر الإجراء المطلوب:",
                 reply_markup=admins_menu_keyboard(),
                 parse_mode="Markdown"
+            )
+
+        elif data == "admins_add_menu":
+            flow = _admins_flow(context)
+            selected = flow.get("selected_admin_id")
+            selected_user = db.query(User).filter_by(telegram_id=selected).first() if selected else None
+            selected_name = selected_user.first_name if selected_user else "غير محدد"
+            await query.edit_message_text(
+                "➕ **إضافة مشرف جديد**\n\n"
+                "لإضافة مشرف جديد، اتبع الخطوات التالية:\n"
+                "1. تحديد المستخدم\n2. تحديد الصلاحيات\n3. تحديد الأقسام المسموح بها\n4. تأكيد الإضافة\n\n"
+                f"👤 المستخدم المحدد حاليًا: {selected_name}\n"
+                f"🆔 ID: `{selected or 'غير محدد'}`\n"
+                f"⚙️ عدد الصلاحيات المحددة: {len(flow.get('selected_permissions', []))}\n"
+                f"📂 عدد الأقسام المحددة: {len(flow.get('selected_sections', []))}",
+                reply_markup=admin_add_menu_keyboard(),
+                parse_mode="Markdown"
+            )
+
+        elif data == "admins_add_by_id":
+            context.user_data["waiting_for"] = "add_admin_id_v2"
+            await query.edit_message_text(
+                "🆔 **إدخال ID المستخدم**\n\nأرسل الآن ID المستخدم الذي تريد ترقيته إلى مشرف.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("❌ إلغاء العملية", callback_data="admins_cancel_add")],
+                    [InlineKeyboardButton("🔙 رجوع", callback_data="admins_add_menu"),
+                     InlineKeyboardButton("🏠 الرئيسية", callback_data="adm_main")]
+                ]),
+                parse_mode="Markdown"
+            )
+
+        elif data == "admins_add_permissions":
+            flow = _admins_flow(context)
+            await query.edit_message_text(
+                "⚙️ **تحديد صلاحيات المشرف**\n\n"
+                "اختر الصلاحيات التي تريد منحها للمشرف. يمكن تحديد أكثر من صلاحية.",
+                reply_markup=admin_perms_keyboard(flow.get("selected_permissions", [])),
+                parse_mode="Markdown",
+            )
+
+        elif data == "admins_add_sections":
+            flow = _admins_flow(context)
+            await query.edit_message_text(
+                "📂 **تحديد الأقسام المسموح بها**\n\n"
+                "اختر الأقسام التي يمكن لهذا المشرف الوصول إليها داخل لوحة الإدارة.",
+                reply_markup=admin_sections_keyboard(flow.get("selected_sections", [])),
+                parse_mode="Markdown",
+            )
+
+        elif data == "admins_add_confirm":
+            flow = _admins_flow(context)
+            missing = []
+            if not flow.get("selected_admin_id"):
+                missing.append("- المستخدم")
+            if not flow.get("selected_permissions"):
+                missing.append("- الصلاحيات")
+            if not flow.get("selected_sections"):
+                missing.append("- الأقسام المسموح بها")
+            if missing:
+                await query.answer("⚠️ البيانات غير مكتملة", show_alert=True)
+                await query.edit_message_text(
+                    "⚠️ لا يمكن إضافة المشرف قبل استكمال البيانات التالية:\n" + "\n".join(missing),
+                    reply_markup=admin_add_menu_keyboard(),
+                )
+            else:
+                selected = db.query(User).filter_by(telegram_id=flow["selected_admin_id"]).first()
+                name = (selected.first_name if selected else "غير معروف")
+                warn = ""
+                if _permission_section_mismatch(flow["selected_permissions"], flow["selected_sections"]):
+                    warn = "\n\nℹ️ بعض الصلاحيات المحددة تتبع أقسامًا غير مسموح بها لهذا المشرف."
+                await query.edit_message_text(
+                    "✅ **تأكيد إضافة المشرف**\n\n"
+                    "راجع البيانات التالية قبل التأكيد:\n\n"
+                    f"- 👤 المستخدم: {name}\n"
+                    f"- 🆔 ID: `{flow['selected_admin_id']}`\n"
+                    f"- ⚙️ عدد الصلاحيات المحددة: {len(flow['selected_permissions'])}\n"
+                    f"- 📂 عدد الأقسام المسموح بها: {len(flow['selected_sections'])}"
+                    f"{warn}",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("✅ تأكيد نهائي", callback_data="admins_add_final_confirm")],
+                        [InlineKeyboardButton("✏️ تعديل الصلاحيات", callback_data="admins_add_permissions"),
+                         InlineKeyboardButton("📂 تعديل الأقسام", callback_data="admins_add_sections")],
+                        [InlineKeyboardButton("👤 تغيير المستخدم", callback_data="admins_add_by_id")],
+                        [InlineKeyboardButton("❌ إلغاء العملية", callback_data="admins_cancel_add")],
+                        [InlineKeyboardButton("🔙 رجوع", callback_data="admins_add_menu"),
+                         InlineKeyboardButton("🏠 الرئيسية", callback_data="adm_main")],
+                    ]),
+                    parse_mode="Markdown",
+                )
+
+        elif data == "admins_add_final_confirm":
+            flow = _admins_flow(context)
+            selected_id = flow.get("selected_admin_id")
+            if not selected_id:
+                await query.answer("⚠️ لم يتم تحديد المستخدم.", show_alert=True)
+                return
+            existing = db.query(AdminUser).filter_by(telegram_id=selected_id).first()
+            if existing:
+                await query.answer("ℹ️ هذا المستخدم مسجل بالفعل كمشرف.", show_alert=True)
+                return
+            user_obj = db.query(User).filter_by(telegram_id=selected_id).first()
+            if not user_obj:
+                await query.answer("❌ المستخدم غير موجود.", show_alert=True)
+                return
+            db.add(AdminUser(
+                telegram_id=selected_id,
+                username=user_obj.username,
+                first_name=user_obj.first_name,
+                permissions=flow.get("selected_permissions", []),
+                allowed_sections=flow.get("selected_sections", []),
+                is_active=True,
+                added_by=query.from_user.id,
+            ))
+            db.commit()
+            flow["selected_permissions"] = []
+            flow["selected_sections"] = []
+            await query.answer("✅ تم إضافة المشرف بنجاح.", show_alert=True)
+            await _handle_admin_details(query, db, db.query(AdminUser).filter_by(telegram_id=selected_id).first().id)
+
+        elif data == "admins_cancel_add":
+            flow = _admins_flow(context)
+            flow["selected_admin_id"] = None
+            flow["selected_permissions"] = []
+            flow["selected_sections"] = []
+            context.user_data["waiting_for"] = None
+            await query.edit_message_text(
+                "❌ تم إلغاء عملية إضافة المشرف.",
+                reply_markup=admins_menu_keyboard(),
             )
 
         elif data == "adm_sub":
@@ -385,6 +563,155 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             page = int(data.split("_")[-1])
             await _handle_admins_list(query, db, page)
 
+        elif data.startswith("admins_list_"):
+            page = int(data.split("_")[-1])
+            flow = _admins_flow(context)
+            flow["current_page"] = page
+            flow["current_filter"] = "all"
+            await _handle_admins_list(query, db, page)
+
+        elif data == "admins_manage_perms":
+            await query.edit_message_text(
+                "⚙️ **إدارة صلاحيات المشرفين**\n\n"
+                "من هنا يمكنك اختيار مشرف ثم عرض صلاحياته أو تعديلها.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📋 اختيار من قائمة المشرفين", callback_data="admins_list_0"),
+                     InlineKeyboardButton("🔍 البحث عن مشرف", callback_data="admins_search_menu")],
+                    [InlineKeyboardButton("👤 عرض صلاحيات مشرف", callback_data="admins_view_selected_perms"),
+                     InlineKeyboardButton("✏️ تعديل صلاحيات مشرف", callback_data="admins_edit_selected_perms")],
+                    [InlineKeyboardButton("🔙 رجوع", callback_data="adm_admins"),
+                     InlineKeyboardButton("🏠 الرئيسية", callback_data="adm_main")]
+                ]),
+                parse_mode="Markdown"
+            )
+
+        elif data == "admins_view_selected_perms":
+            flow = _admins_flow(context)
+            selected = flow.get("selected_admin_id")
+            if not selected:
+                await query.answer("⚠️ يجب اختيار مشرف أولًا.", show_alert=True)
+                return
+            admin_obj = db.query(AdminUser).filter_by(telegram_id=selected).first()
+            if not admin_obj:
+                await query.answer("❌ المشرف غير موجود.", show_alert=True)
+                return
+            perms = "\n".join([f"- ✅ {p}" for p in (admin_obj.permissions or [])]) or "- لا توجد صلاحيات"
+            await query.edit_message_text(
+                f"📊 **عرض صلاحيات المشرف**\n\nالصلاحيات الحالية:\n{perms}",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✏️ تعديل الصلاحيات", callback_data=f"edit_admin_perms_{admin_obj.id}")],
+                    [InlineKeyboardButton("🔙 رجوع", callback_data="admins_manage_perms"),
+                     InlineKeyboardButton("🏠 الرئيسية", callback_data="adm_main")],
+                ]),
+                parse_mode="Markdown",
+            )
+
+        elif data == "admins_edit_selected_perms":
+            flow = _admins_flow(context)
+            selected = flow.get("selected_admin_id")
+            if not selected:
+                await query.answer("⚠️ يجب اختيار مشرف أولًا.", show_alert=True)
+                return
+            admin_obj = db.query(AdminUser).filter_by(telegram_id=selected).first()
+            if not admin_obj:
+                await query.answer("❌ المشرف غير موجود.", show_alert=True)
+                return
+            context.user_data["editing_admin_id"] = admin_obj.id
+            context.user_data["selected_perms"] = list(admin_obj.permissions or [])
+            await query.edit_message_text(
+                "✏️ **تعديل صلاحيات المشرف**\n\nيمكنك الآن تعديل صلاحيات المشرف المحدد.",
+                reply_markup=admin_perms_keyboard(context.user_data["selected_perms"]),
+                parse_mode="Markdown",
+            )
+
+        elif data == "admins_search_menu":
+            context.user_data["waiting_for"] = "search_admin_v2"
+            await query.edit_message_text(
+                "🔍 **البحث عن مشرف**\n\nاختر طريقة البحث:\n- عبر ID\n- عبر Username\n- عبر الاسم\n\nأرسل الآن قيمة البحث:",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📋 عرض النتائج", callback_data="admins_search_results_0"),
+                     InlineKeyboardButton("🧹 مسح البحث", callback_data="admins_search_clear")],
+                    [InlineKeyboardButton("🔙 رجوع", callback_data="adm_admins"),
+                     InlineKeyboardButton("🏠 الرئيسية", callback_data="adm_main")],
+                ]),
+                parse_mode="Markdown",
+            )
+
+        elif data.startswith("admins_search_results_"):
+            page = int(data.split("_")[-1])
+            results = context.user_data.get("admins_search_results", [])
+            if not results:
+                await query.answer("ℹ️ لا توجد نتائج بحث محفوظة حاليًا.", show_alert=True)
+                return
+            page = max(0, min(page, len(results) - 1))
+            admin_obj = db.query(AdminUser).filter_by(id=results[page]).first()
+            if not admin_obj:
+                await query.answer("❌ النتيجة غير متاحة.", show_alert=True)
+                return
+            _admins_flow(context)["selected_admin_id"] = admin_obj.telegram_id
+            nav = []
+            if page > 0:
+                nav.append(InlineKeyboardButton("⬅️ السابق", callback_data=f"admins_search_results_{page-1}"))
+            if page < len(results) - 1:
+                nav.append(InlineKeyboardButton("➡️ التالي", callback_data=f"admins_search_results_{page+1}"))
+            kb = [[InlineKeyboardButton("👤 عرض المشرف", callback_data=f"admin_details_{admin_obj.id}")]]
+            if nav:
+                kb.append(nav)
+            kb.extend([
+                [InlineKeyboardButton("🧹 مسح البحث", callback_data="admins_search_clear")],
+                [InlineKeyboardButton("🔙 رجوع", callback_data="admins_search_menu"),
+                 InlineKeyboardButton("🏠 الرئيسية", callback_data="adm_main")],
+            ])
+            await query.edit_message_text(
+                "📋 **نتائج البحث**\n\n"
+                f"👤 الاسم: {admin_obj.first_name or 'غير معروف'}\n"
+                f"🆔 ID: `{admin_obj.telegram_id}`\n"
+                f"🔗 Username: @{admin_obj.username or 'لا يوجد'}",
+                reply_markup=InlineKeyboardMarkup(kb),
+                parse_mode="Markdown",
+            )
+
+        elif data == "admins_search_clear":
+            context.user_data.pop("admins_search_results", None)
+            _admins_flow(context)["last_search_query"] = ""
+            await query.answer("✅ تم مسح نتائج البحث الحالية.", show_alert=True)
+
+        elif data.startswith("admins_activity_"):
+            page = int(data.split("_")[-1])
+            _admins_flow(context)["current_page"] = page
+            await _handle_admins_activity(query, db)
+
+        elif data.startswith("admins_disabled_"):
+            page = int(data.split("_")[-1])
+            _admins_flow(context)["current_page"] = page
+            await _handle_disabled_admins(query, db)
+
+        elif data == "admins_export_menu":
+            await query.edit_message_text(
+                "📥 **تصدير قائمة المشرفين**\n\nاختر صيغة التصدير المطلوبة:",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📄 تصدير CSV", callback_data="admins_export_fmt_csv"),
+                     InlineKeyboardButton("📄 تصدير TXT", callback_data="admins_export_fmt_txt")],
+                    [InlineKeyboardButton("📄 تصدير JSON", callback_data="admins_export_fmt_json")],
+                    [InlineKeyboardButton("📥 تحميل الملف", callback_data="admins_export_download")],
+                    [InlineKeyboardButton("🔙 رجوع", callback_data="adm_admins"),
+                     InlineKeyboardButton("🏠 الرئيسية", callback_data="adm_main")],
+                ]),
+                parse_mode="Markdown",
+            )
+
+        elif data.startswith("admins_export_fmt_"):
+            fmt = data.split("_")[-1]
+            context.user_data["admins_export_format"] = fmt
+            await query.answer(f"✅ تم تحديد صيغة {fmt.upper()}. اضغط تحميل الملف.", show_alert=True)
+
+        elif data == "admins_export_download":
+            fmt = context.user_data.get("admins_export_format")
+            if not fmt:
+                await query.answer("⚠️ يرجى اختيار صيغة التصدير أولًا.", show_alert=True)
+                return
+            await _handle_export(query, context, db, fmt, "admins")
+
         elif data == "adm_admins_activity":
             await _handle_admins_activity(query, db)
 
@@ -396,6 +723,9 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif data.startswith("admin_details_"):
             admin_id = int(data.split("_")[-1])
+            admin_obj = db.query(AdminUser).filter_by(id=admin_id).first()
+            if admin_obj:
+                _admins_flow(context)["selected_admin_id"] = admin_obj.telegram_id
             await _handle_admin_details(query, db, admin_id)
 
         elif data.startswith("disable_admin_"):
@@ -409,6 +739,9 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             admin_id = int(data.split("_")[-1])
             admin_obj = db.query(AdminUser).filter_by(id=admin_id).first()
             if admin_obj:
+                if admin_obj.telegram_id == query.from_user.id:
+                    await query.answer("⚠️ لا يمكنك تعطيل حسابك الإداري الحالي.", show_alert=True)
+                    return
                 admin_obj.is_active = False
                 db.commit()
                 await query.answer("🚫 تم تعطيل المشرف", show_alert=True)
@@ -438,6 +771,13 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             admin_id = int(data.split("_")[-1])
             admin_obj = db.query(AdminUser).filter_by(id=admin_id).first()
             if admin_obj:
+                if admin_obj.telegram_id == query.from_user.id:
+                    await query.answer("⚠️ لا يمكنك حذف نفسك أثناء الجلسة الحالية.", show_alert=True)
+                    return
+                active_admins = db.query(AdminUser).filter_by(is_active=True).count()
+                if admin_obj.is_active and active_admins <= 1:
+                    await query.answer("⚠️ لا يمكن حذف آخر مشرف رئيسي في النظام.", show_alert=True)
+                    return
                 db.delete(admin_obj)
                 db.commit()
                 await query.answer("🗑 تم حذف المشرف", show_alert=True)
@@ -459,33 +799,51 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif data.startswith("toggle_perm_"):
             perm = data.replace("toggle_perm_", "")
-            selected = context.user_data.get("selected_perms", [])
+            flow = _admins_flow(context)
+            selected = context.user_data.get("selected_perms")
+            if selected is None:
+                selected = flow.get("selected_permissions", [])
             if perm in selected:
                 selected.remove(perm)
             else:
                 selected.append(perm)
             context.user_data["selected_perms"] = selected
+            flow["selected_permissions"] = selected
             await query.edit_message_reply_markup(
                 reply_markup=admin_perms_keyboard(selected)
+            )
+            await query.answer(
+                f"{'🧹 تم إلغاء تحديد' if perm not in selected else '✅ تم تحديد'} صلاحية: {perm}",
+                show_alert=False,
             )
 
         elif data == "perms_select_all":
             all_perms = [p.value for p in AdminPermission]
             context.user_data["selected_perms"] = all_perms
+            flow = _admins_flow(context)
+            flow["selected_permissions"] = all_perms
             await query.edit_message_reply_markup(
                 reply_markup=admin_perms_keyboard(all_perms)
             )
+            await query.answer("✅ تم تحديد جميع الصلاحيات.", show_alert=False)
 
         elif data == "perms_deselect_all":
             context.user_data["selected_perms"] = []
+            flow = _admins_flow(context)
+            flow["selected_permissions"] = []
             await query.edit_message_reply_markup(
                 reply_markup=admin_perms_keyboard([])
             )
+            await query.answer("✅ تم إلغاء تحديد جميع الصلاحيات.", show_alert=False)
 
         elif data == "perms_save":
             admin_id = context.user_data.get("editing_admin_id")
             new_admin_id = context.user_data.get("new_admin_id")
-            selected = context.user_data.get("selected_perms", [])
+            flow = _admins_flow(context)
+            selected = context.user_data.get("selected_perms", flow.get("selected_permissions", []))
+            if not selected:
+                await query.answer("⚠️ يجب تحديد صلاحية واحدة على الأقل.", show_alert=True)
+                return
             if admin_id:
                 admin_obj = db.query(AdminUser).filter_by(id=admin_id).first()
                 if admin_obj:
@@ -504,8 +862,53 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop("editing_admin_id", None)
             context.user_data.pop("new_admin_id", None)
             context.user_data.pop("selected_perms", None)
+            flow["selected_permissions"] = []
             await query.edit_message_text(
                 "👮 **إدارة المشرفين**", reply_markup=admins_menu_keyboard(), parse_mode="Markdown"
+            )
+
+        elif data.startswith("admins_toggle_section_"):
+            section = data.replace("admins_toggle_section_", "")
+            flow = _admins_flow(context)
+            selected = flow.get("selected_sections", [])
+            if section in selected:
+                selected.remove(section)
+                msg = f"🧹 تم إلغاء السماح بالوصول إلى: {ADMIN_SECTIONS.get(section, section)}"
+            else:
+                selected.append(section)
+                msg = f"✅ تم السماح بالوصول إلى: {ADMIN_SECTIONS.get(section, section)}"
+            flow["selected_sections"] = selected
+            await query.edit_message_reply_markup(reply_markup=admin_sections_keyboard(selected))
+            await query.answer(msg, show_alert=False)
+
+        elif data == "admins_sections_select_all":
+            flow = _admins_flow(context)
+            flow["selected_sections"] = list(ADMIN_SECTIONS.keys())
+            await query.edit_message_reply_markup(reply_markup=admin_sections_keyboard(flow["selected_sections"]))
+            await query.answer("✅ تم تحديد جميع الأقسام.", show_alert=False)
+
+        elif data == "admins_sections_clear_all":
+            flow = _admins_flow(context)
+            flow["selected_sections"] = []
+            await query.edit_message_reply_markup(reply_markup=admin_sections_keyboard([]))
+            await query.answer("✅ تم إلغاء تحديد جميع الأقسام.", show_alert=False)
+
+        elif data == "admins_sections_save":
+            flow = _admins_flow(context)
+            if not flow.get("selected_sections"):
+                await query.answer("⚠️ يجب تحديد قسم واحد على الأقل.", show_alert=True)
+                return
+            await query.answer("✅ تم حفظ الأقسام المسموح بها بنجاح.", show_alert=True)
+            await query.edit_message_text(
+                "✅ تم حفظ الأقسام المسموح بها بنجاح.",
+                reply_markup=admin_add_menu_keyboard(),
+            )
+
+        elif data == "admins_sections_cancel":
+            _admins_flow(context)["selected_sections"] = []
+            await query.edit_message_text(
+                "❌ تم إلغاء عملية تحديد الأقسام.",
+                reply_markup=admin_add_menu_keyboard(),
             )
 
         elif data == "adm_sub_add":
@@ -1511,6 +1914,26 @@ async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 await update.message.reply_text("❌ يرجى إرسال ID صحيح (أرقام فقط).")
             return
 
+        elif waiting == "add_admin_id_v2":
+            if not text.isdigit():
+                await update.message.reply_text("⚠️ الرجاء إرسال ID صحيح مكوّن من أرقام فقط.")
+                return
+            tg_id = int(text)
+            user_obj = db.query(User).filter_by(telegram_id=tg_id).first()
+            if not user_obj:
+                await update.message.reply_text("❌ لم يتم العثور على مستخدم بهذا الـ ID.")
+                return
+            flow = _admins_flow(context)
+            flow["selected_admin_id"] = tg_id
+            context.user_data["waiting_for"] = None
+            await update.message.reply_text(
+                "✅ تم العثور على المستخدم بنجاح.\n\n"
+                f"- 👤 الاسم: {user_obj.first_name or 'غير معروف'}\n"
+                f"- 🆔 ID: {user_obj.telegram_id}\n"
+                f"- 🔗 Username: @{user_obj.username or 'لا يوجد'}"
+            )
+            return
+
         elif waiting == "perms_save_new":
             pass
 
@@ -1840,6 +2263,33 @@ async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
             context.user_data["waiting_for"] = None
             return
 
+        elif waiting == "search_admin_v2":
+            flow = _admins_flow(context)
+            flow["last_search_query"] = text
+            results = []
+            if text.isdigit():
+                rec = db.query(AdminUser).filter_by(telegram_id=int(text)).first()
+                if rec:
+                    results.append(rec.id)
+            else:
+                uname = text.lstrip("@").lower()
+                rec = db.query(AdminUser).filter(func.lower(AdminUser.username) == uname).first()
+                if rec:
+                    results.append(rec.id)
+                for item in db.query(AdminUser).filter(AdminUser.first_name.ilike(f"%{text}%")).limit(10).all():
+                    if item.id not in results:
+                        results.append(item.id)
+            context.user_data["admins_search_results"] = results
+            context.user_data["waiting_for"] = None
+            if not results:
+                await update.message.reply_text("❌ لم يتم العثور على أي نتائج مطابقة.")
+                return
+            if len(results) == 1:
+                await update.message.reply_text("✅ تم العثور على المشرف.")
+            else:
+                await update.message.reply_text("✅ تم العثور على عدة نتائج مطابقة. استخدم زر (📋 عرض النتائج).")
+            return
+
         elif waiting == "ad_title":
             context.user_data["ad_data"] = {"title": text}
             context.user_data["waiting_for"] = "ad_text"
@@ -2024,8 +2474,12 @@ async def _handle_admins_list(query, db, page: int):
 
     if not admins:
         await query.edit_message_text(
-            "👮 لا يوجد مشرفون مضافون.",
-            reply_markup=back_keyboard("adm_admins"),
+            "📭 لا يوجد مشرفون حاليًا.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("➕ إضافة مشرف", callback_data="admins_add_menu")],
+                [InlineKeyboardButton("🔙 رجوع", callback_data="adm_admins"),
+                 InlineKeyboardButton("🏠 الرئيسية", callback_data="adm_main")],
+            ]),
             parse_mode="Markdown"
         )
         return
@@ -2049,7 +2503,12 @@ async def _handle_admins_list(query, db, page: int):
         nav.append(InlineKeyboardButton("➡️", callback_data=f"adm_admins_list_{page + 1}"))
     if nav:
         buttons.append(nav)
-    buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data="adm_admins")])
+    buttons.append([
+        InlineKeyboardButton("🔍 البحث عن مشرف", callback_data="admins_search_menu"),
+        InlineKeyboardButton("🔄 تحديث القائمة", callback_data=f"admins_list_{page}")
+    ])
+    buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data="adm_admins"),
+                    InlineKeyboardButton("🏠 الرئيسية", callback_data="adm_main")])
 
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
 
@@ -2075,7 +2534,8 @@ async def _handle_admin_details(query, db, admin_id: int):
         [InlineKeyboardButton("🚫 تعطيل", callback_data=f"disable_admin_{admin_id}"),
          InlineKeyboardButton("✅ تفعيل", callback_data=f"enable_admin_{admin_id}")],
         [InlineKeyboardButton("🗑 حذف", callback_data=f"delete_admin_{admin_id}")],
-        [InlineKeyboardButton("🔙 رجوع", callback_data="adm_admins")]
+        [InlineKeyboardButton("🔙 رجوع", callback_data="admins_list_0"),
+         InlineKeyboardButton("🏠 الرئيسية", callback_data="adm_main")]
     ]
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
 
@@ -2087,15 +2547,26 @@ async def _handle_admins_activity(query, db):
         name = a.first_name or a.username or str(a.telegram_id)
         last = a.last_active.strftime('%Y-%m-%d') if a.last_active else "لم يدخل"
         text += f"• {name}: آخر نشاط {last}\n"
-    await query.edit_message_text(text, reply_markup=back_keyboard("adm_admins"), parse_mode="Markdown")
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 تحديث البيانات", callback_data="admins_activity_0")],
+            [InlineKeyboardButton("🔙 رجوع", callback_data="adm_admins"),
+             InlineKeyboardButton("🏠 الرئيسية", callback_data="adm_main")]
+        ]),
+        parse_mode="Markdown"
+    )
 
 
 async def _handle_disabled_admins(query, db):
     admins = db.query(AdminUser).filter_by(is_active=False).all()
     if not admins:
         await query.edit_message_text(
-            "🚫 لا يوجد مشرفون معطلون.",
-            reply_markup=back_keyboard("adm_admins"),
+            "✅ لا يوجد مشرفون معطلون حاليًا.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 رجوع", callback_data="adm_admins"),
+                 InlineKeyboardButton("🏠 الرئيسية", callback_data="adm_main")]
+            ]),
             parse_mode="Markdown"
         )
         return
@@ -2108,7 +2579,9 @@ async def _handle_disabled_admins(query, db):
             InlineKeyboardButton(f"✅ تفعيل {name[:15]}", callback_data=f"enable_admin_{a.id}"),
             InlineKeyboardButton("🗑 حذف", callback_data=f"delete_admin_{a.id}")
         ])
-    buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data="adm_admins")])
+    buttons.append([InlineKeyboardButton("🔄 تحديث القائمة", callback_data="admins_disabled_0")])
+    buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data="adm_admins"),
+                    InlineKeyboardButton("🏠 الرئيسية", callback_data="adm_main")])
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
 
 
@@ -2699,3 +3172,43 @@ async def _handle_export(query, context, db, fmt: str, section: str):
             caption=f"📥 تصدير البيانات - {len(data)} سجل"
         )
         await query.answer("✅ تم التصدير", show_alert=True)
+    elif "admins" in section:
+        data = db.query(AdminUser).all()
+        if fmt == "csv":
+            output = io.StringIO()
+            writer = csv.writer(output)
+            writer.writerow(["telegram_id", "username", "first_name", "is_active", "permissions", "allowed_sections"])
+            for a in data:
+                writer.writerow([
+                    a.telegram_id, a.username or "", a.first_name or "", a.is_active,
+                    ",".join(a.permissions or []), ",".join(a.allowed_sections or [])
+                ])
+            file_content = output.getvalue().encode("utf-8")
+            filename = "admins.csv"
+        elif fmt == "json":
+            rows = [{
+                "telegram_id": a.telegram_id,
+                "username": a.username,
+                "first_name": a.first_name,
+                "is_active": a.is_active,
+                "permissions": a.permissions or [],
+                "allowed_sections": a.allowed_sections or [],
+            } for a in data]
+            file_content = json.dumps(rows, ensure_ascii=False, indent=2).encode("utf-8")
+            filename = "admins.json"
+        else:
+            lines = [
+                f"{a.telegram_id}\t{a.username or ''}\t{a.first_name or ''}\t{a.is_active}\t"
+                f"{','.join(a.permissions or [])}\t{','.join(a.allowed_sections or [])}"
+                for a in data
+            ]
+            file_content = "\n".join(lines).encode("utf-8")
+            filename = "admins.txt"
+
+        await context.bot.send_document(
+            chat_id=query.from_user.id,
+            document=file_content,
+            filename=filename,
+            caption=f"📥 تصدير قائمة المشرفين - {len(data)} سجل"
+        )
+        await query.answer("✅ تم تجهيز الملف بنجاح.", show_alert=True)
