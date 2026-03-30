@@ -47,6 +47,44 @@ class AdminRoutingTests(unittest.IsolatedAsyncioTestCase):
         callback_handler.assert_not_awaited()
         db.close.assert_called_once()
 
+    async def test_combined_callback_routes_admins_namespace_callbacks_to_admin_handler(self):
+        update = SimpleNamespace(
+            callback_query=SimpleNamespace(data="admins_add_menu", from_user=SimpleNamespace(id=1))
+        )
+        context = SimpleNamespace()
+        db = MagicMock()
+
+        with (
+            patch.object(bootstrap, "SessionLocal", return_value=db),
+            patch.object(bootstrap, "is_admin", return_value=True),
+            patch.object(bootstrap, "admin_callback", new=AsyncMock()) as admin_callback,
+            patch.object(bootstrap, "callback_handler", new=AsyncMock()) as callback_handler,
+        ):
+            await bootstrap.combined_callback_handler(update, context)
+
+        admin_callback.assert_awaited_once_with(update, context)
+        callback_handler.assert_not_awaited()
+        db.close.assert_called_once()
+
+    async def test_combined_callback_routes_edit_message_callbacks_to_admin_handler(self):
+        update = SimpleNamespace(
+            callback_query=SimpleNamespace(data="edit_msg_help", from_user=SimpleNamespace(id=1))
+        )
+        context = SimpleNamespace()
+        db = MagicMock()
+
+        with (
+            patch.object(bootstrap, "SessionLocal", return_value=db),
+            patch.object(bootstrap, "is_admin", return_value=True),
+            patch.object(bootstrap, "admin_callback", new=AsyncMock()) as admin_callback,
+            patch.object(bootstrap, "callback_handler", new=AsyncMock()) as callback_handler,
+        ):
+            await bootstrap.combined_callback_handler(update, context)
+
+        admin_callback.assert_awaited_once_with(update, context)
+        callback_handler.assert_not_awaited()
+        db.close.assert_called_once()
+
     async def test_combined_message_routes_sub3_waiting_messages_to_admin_handler(self):
         update = SimpleNamespace(
             message=SimpleNamespace(text="https://t.me/example"),

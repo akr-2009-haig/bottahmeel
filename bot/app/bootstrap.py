@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 ADMIN_CB_PREFIXES = [
     "adm_", "ui_",
+    "admins_",
     "ban_user_", "unban_user_", "delete_user_",
     "confirm_ban_", "confirm_unban_", "confirm_delete_user_",
     "user_info_",
@@ -28,9 +29,12 @@ ADMIN_CB_PREFIXES = [
     "bc_", "do_broadcast_", "view_ad_", "delete_ad_",
     "af_", "toggle_ignore_inactive", "confirm_af_reset",
     "sched_", "pause_sched_", "resume_sched_", "delete_sched_", "confirm_delete_sched_",
+    "sched_repeat_",
     "group_details_", "delete_group_", "confirm_delete_group_",
+    "af_speed_", "af_delay_", "af_retry_",
     "confirm_del_inactive_", "export_", "toggle_tiktok", "toggle_youtube",
     "toggle_instagram", "toggle_likee", "set_activity_",
+    "edit_msg_",
     "confirm_settings_reset", "confirm_ui_reset",
     "view_all_messages",
 ]
