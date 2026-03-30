@@ -76,8 +76,6 @@ async def combined_message_handler(update: Update, context):
     if is_adm and waiting and any(waiting.startswith(prefix) for prefix in ADMIN_WAIT_PREFIXES):
         await admin_message_handler(update, context)
         return
-    if not update.message.text:
-        return
     await message_handler(update, context)
 
 
