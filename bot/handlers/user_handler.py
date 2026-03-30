@@ -735,11 +735,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─── message handler ──────────────────────────────────────────────────────────
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
+    if not update.message:
         return
 
     user = update.effective_user
-    text = update.message.text
+    text = (update.message.text or update.message.caption or "").strip()
+    if not text:
+        return
 
     db = SessionLocal()
     try:
