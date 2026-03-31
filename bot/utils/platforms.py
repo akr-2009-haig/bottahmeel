@@ -406,7 +406,7 @@ def classify_extraction_error(exc: Exception) -> str:
         )
     ):
         return "private"
-    if any(marker in message for marker in ("story unavailable", "story has expired", "expired", "no longer available")):
+    if any(marker in normalized_message for marker in ("story unavailable", "story has expired", "expired", "no longer available")):
         return "expired"
     return "generic"
 

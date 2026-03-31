@@ -133,12 +133,15 @@ def _schedule_local_download(context: ContextTypes.DEFAULT_TYPE, payload: dict) 
             await _process_download(context.bot, payload)
         except Exception as exc:
             logger.exception("Local download fallback failed for chat_id=%s url=%s: %s", payload.get("chat_id"), payload.get("url"), exc)
-            await _safe_edit_message(
-                context.bot,
-                int(payload.get("chat_id") or 0),
-                payload.get("status_message_id"),
-                _download_failure_message(payload.get("lang") or "ar", "generic"),
-            )
+            try:
+                await _safe_edit_message(
+                    context.bot,
+                    int(payload.get("chat_id") or 0),
+                    payload.get("status_message_id"),
+                    _download_failure_message(payload.get("lang") or "ar", "generic"),
+                )
+            except Exception:
+                logger.exception("Failed to notify user of local download failure chat_id=%s", payload.get("chat_id"))
 
     application = getattr(context, "application", None)
     if application is not None:
