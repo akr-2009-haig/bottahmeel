@@ -1208,6 +1208,7 @@ async def ui_avail_langs(query, context, page: int = 0):
 async def ui_avail_toggle(query, context, code: str, page: int = 0):
     """Toggle enable/disable for a language (builtin languages are protected)."""
     db = SessionLocal()
+    success_message = None
     try:
         lang = db.query(BotLanguage).filter_by(code=code).first()
         if not lang:
@@ -1225,10 +1226,11 @@ async def ui_avail_toggle(query, context, code: str, page: int = 0):
             await query.answer("❌ تعذر حفظ حالة اللغة. حاول مرة أخرى.", show_alert=True)
             return
         status = "✅ مفعّلة" if lang.is_enabled else "❌ معطّلة"
+        success_message = f"{lang.flag} {lang.name} {status}"
     finally:
         db.close()
     await ui_avail_langs(query, context, page)
-    await query.answer(f"{lang.flag} {lang.name} {status}")
+    await query.answer(success_message)
 
 
 async def ui_lang_edit(query, context, lang: str):
@@ -1686,22 +1688,28 @@ async def ui_handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         except ValueError:
             return True
         db = SessionLocal()
-        updated = False
+        commit_succeeded = False
+        not_found = False
         try:
             wa = db.query(WebAppButton).filter_by(id=wa_id).first()
             if wa:
                 wa.label = text
                 try:
                     db.commit()
-                    updated = True
+                    commit_succeeded = True
                 except Exception as exc:
                     db.rollback()
                     logger.error("Failed to update Web App label %s: %s", wa_id, exc)
+            else:
+                not_found = True
         finally:
             db.close()
-        if not updated:
+        if not commit_succeeded:
             context.user_data.pop("waiting_for", None)
-            await update.message.reply_text("❌ تعذر تحديث عنوان التطبيق. تأكد أن العنصر ما زال موجوداً ثم حاول مرة أخرى.")
+            if not_found:
+                await update.message.reply_text("❌ التطبيق المطلوب لم يعد موجوداً.")
+            else:
+                await update.message.reply_text("❌ تعذر تحديث عنوان التطبيق. حاول مرة أخرى.")
             return True
         context.user_data.pop("waiting_for", None)
         await update.message.reply_text(
@@ -1723,22 +1731,28 @@ async def ui_handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await update.message.reply_text("❌ الرابط يجب أن يبدأ بـ https://")
             return True
         db = SessionLocal()
-        updated = False
+        commit_succeeded = False
+        not_found = False
         try:
             wa = db.query(WebAppButton).filter_by(id=wa_id).first()
             if wa:
                 wa.url = text
                 try:
                     db.commit()
-                    updated = True
+                    commit_succeeded = True
                 except Exception as exc:
                     db.rollback()
                     logger.error("Failed to update Web App URL %s: %s", wa_id, exc)
+            else:
+                not_found = True
         finally:
             db.close()
-        if not updated:
+        if not commit_succeeded:
             context.user_data.pop("waiting_for", None)
-            await update.message.reply_text("❌ تعذر تحديث رابط التطبيق. تأكد أن العنصر ما زال موجوداً ثم حاول مرة أخرى.")
+            if not_found:
+                await update.message.reply_text("❌ التطبيق المطلوب لم يعد موجوداً.")
+            else:
+                await update.message.reply_text("❌ تعذر تحديث رابط التطبيق. حاول مرة أخرى.")
             return True
         context.user_data.pop("waiting_for", None)
         await update.message.reply_text(
@@ -1757,7 +1771,8 @@ async def ui_handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         except ValueError:
             return True
         db = SessionLocal()
-        updated = False
+        commit_succeeded = False
+        not_found = False
         try:
             btn = db.query(BotButton).filter_by(id=btn_id).first()
             if btn:
@@ -1765,15 +1780,20 @@ async def ui_handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 btn.name = text
                 try:
                     db.commit()
-                    updated = True
+                    commit_succeeded = True
                 except Exception as exc:
                     db.rollback()
                     logger.error("Failed to update button label %s: %s", btn_id, exc)
+            else:
+                not_found = True
         finally:
             db.close()
-        if not updated:
+        if not commit_succeeded:
             context.user_data.pop("waiting_for", None)
-            await update.message.reply_text("❌ تعذر تحديث عنوان الزر. تأكد أن الزر ما زال موجوداً ثم حاول مرة أخرى.")
+            if not_found:
+                await update.message.reply_text("❌ الزر المطلوب لم يعد موجوداً.")
+            else:
+                await update.message.reply_text("❌ تعذر تحديث عنوان الزر. حاول مرة أخرى.")
             return True
         context.user_data.pop("waiting_for", None)
         await update.message.reply_text(
@@ -1796,23 +1816,29 @@ async def ui_handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await update.message.reply_text("❌ الرابط يجب أن يبدأ بـ https://")
             return True
         db = SessionLocal()
-        updated = False
+        commit_succeeded = False
+        not_found = False
         try:
             btn = db.query(BotButton).filter_by(id=btn_id).first()
             if btn:
                 btn.data = text
                 try:
                     db.commit()
-                    updated = True
+                    commit_succeeded = True
                 except Exception as exc:
                     db.rollback()
                     logger.error("Failed to update button data %s: %s", btn_id, exc)
+            else:
+                not_found = True
         finally:
             db.close()
-        if not updated:
+        if not commit_succeeded:
             context.user_data.pop("waiting_for", None)
             context.user_data.pop("ui_btn_edit_type", None)
-            await update.message.reply_text("❌ تعذر تحديث بيانات الزر. تأكد أن الزر ما زال موجوداً ثم حاول مرة أخرى.")
+            if not_found:
+                await update.message.reply_text("❌ الزر المطلوب لم يعد موجوداً.")
+            else:
+                await update.message.reply_text("❌ تعذر تحديث بيانات الزر. حاول مرة أخرى.")
             return True
         context.user_data.pop("waiting_for", None)
         context.user_data.pop("ui_btn_edit_type", None)

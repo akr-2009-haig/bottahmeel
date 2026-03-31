@@ -292,7 +292,7 @@ class AdminUiPersistenceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(handled)
         update.message.reply_text.assert_awaited_once_with(
-            "❌ تعذر تحديث عنوان الزر. تأكد أن الزر ما زال موجوداً ثم حاول مرة أخرى."
+            "❌ الزر المطلوب لم يعد موجوداً."
         )
         self.assertNotIn("waiting_for", context.user_data)
         db.close.assert_called_once()
