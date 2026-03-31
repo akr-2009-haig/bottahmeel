@@ -77,6 +77,10 @@ def _admins_flow(context) -> dict:
     return flow
 
 
+def _setting_saved(key: str, value: str) -> bool:
+    return set_setting(key, value)
+
+
 def _permission_section_mismatch(perms: list[str], sections: list[str]) -> bool:
     if not perms or not sections:
         return False
@@ -942,22 +946,26 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         elif data == "sub_enable":
-            set_setting("subscription_enabled", "true")
-            await query.answer("✅ تم تفعيل الاشتراك الإجباري", show_alert=True)
+            if not _setting_saved("subscription_enabled", "true"):
+                await query.answer("❌ تعذر حفظ إعداد الاشتراك الإجباري.", show_alert=True)
+                return
             await query.edit_message_text(
                 "⚙️ **إعدادات الاشتراك الإجباري**\n\nالحالة: ✅ مفعل",
                 reply_markup=sub_settings_keyboard(True),
                 parse_mode="Markdown"
             )
+            await query.answer("✅ تم تفعيل الاشتراك الإجباري")
 
         elif data == "sub_disable":
-            set_setting("subscription_enabled", "false")
-            await query.answer("🔓 تم تعطيل الاشتراك الإجباري", show_alert=True)
+            if not _setting_saved("subscription_enabled", "false"):
+                await query.answer("❌ تعذر حفظ إعداد الاشتراك الإجباري.", show_alert=True)
+                return
             await query.edit_message_text(
                 "⚙️ **إعدادات الاشتراك الإجباري**\n\nالحالة: ❌ معطل",
                 reply_markup=sub_settings_keyboard(False),
                 parse_mode="Markdown"
             )
+            await query.answer("🔓 تم تعطيل الاشتراك الإجباري")
 
         elif data.startswith("delete_sub_"):
             sub_id = int(data.split("_")[-1])
@@ -1398,11 +1406,13 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif data.startswith("set_activity_"):
             activity = data.replace("set_activity_", "")
-            set_setting("activity_status", activity)
-            await query.answer("✅ تم حفظ حالة النشاط", show_alert=True)
+            if not _setting_saved("activity_status", activity):
+                await query.answer("❌ تعذر حفظ حالة النشاط.", show_alert=True)
+                return
             await query.edit_message_text(
                 "⚙️ **إعدادات البوت**", reply_markup=settings_menu_keyboard(), parse_mode="Markdown"
             )
+            await query.answer("✅ تم حفظ حالة النشاط")
 
         elif data == "adm_set_platforms":
             from .ui_handler import ui_platforms_main
@@ -1435,9 +1445,12 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 key = platform_map[data]
                 current = get_setting(key, "true")
                 new_val = "false" if current == "true" else "true"
-                set_setting(key, new_val)
+                if not set_setting(key, new_val):
+                    await query.answer("❌ تعذر حفظ حالة المنصة.", show_alert=True)
+                    return
                 from .ui_handler import ui_platforms_main
                 await ui_platforms_main(query, context)
+                await query.answer("✅ تم تحديث حالة المنصة")
 
         elif data == "adm_set_messages":
             await query.edit_message_text(
@@ -2127,7 +2140,9 @@ async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
         elif waiting and waiting.startswith("edit_setting_"):
             setting_key = waiting.replace("edit_setting_", "")
-            set_setting(setting_key, text)
+            if not _setting_saved(setting_key, text):
+                await update.message.reply_text("❌ تعذر حفظ الإعداد. أعد المحاولة.")
+                return
             await update.message.reply_text(
                 f"✅ تم حفظ الإعداد بنجاح.",
                 reply_markup=settings_menu_keyboard()

@@ -329,7 +329,7 @@ def get_setting(key: str, default: str = "") -> str:
         db.close()
 
 
-def set_setting(key: str, value: str):
+def set_setting(key: str, value: str) -> bool:
     db = SessionLocal()
     try:
         setting = db.query(BotSettings).filter_by(key=key).first()
@@ -339,9 +339,11 @@ def set_setting(key: str, value: str):
             db.add(BotSettings(key=key, value=value))
         db.commit()
         _cache_set(key, value)
+        return True
     except Exception as e:
         db.rollback()
         _cache_invalidate(key)
         logger.error(f"Error setting {key}: {e}")
+        return False
     finally:
         db.close()
