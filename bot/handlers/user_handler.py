@@ -101,13 +101,14 @@ def build_lang_keyboard(current_lang: str = "ar"):
 
 def _has_active_redis_worker() -> bool:
     settings = load_settings()
-    cutoff = datetime.now(timezone.utc) - timedelta(seconds=max(settings.worker_heartbeat_ttl_seconds, 1))
+    heartbeat_ttl_seconds = settings.worker_heartbeat_ttl_seconds if settings.worker_heartbeat_ttl_seconds > 0 else 1
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=heartbeat_ttl_seconds)
     db = SessionLocal()
     try:
         return (
             db.query(WorkerHeartbeat)
             .filter(WorkerHeartbeat.status != "stopped")
-            .filter(WorkerHeartbeat.last_seen.is_not(None))
+            .filter(WorkerHeartbeat.last_seen.isnot(None))
             .filter(WorkerHeartbeat.last_seen >= cutoff)
             .first()
             is not None

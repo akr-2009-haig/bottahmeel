@@ -391,9 +391,9 @@ def is_instagram_profile_url(url: str) -> bool:
 
 
 def classify_extraction_error(exc: Exception) -> str:
-    message = str(exc).lower().replace("’", "'")
+    normalized_message = str(exc).lower().replace("’", "'")
     if any(
-        marker in message
+        marker in normalized_message
         for marker in (
             "private",
             "login required",
