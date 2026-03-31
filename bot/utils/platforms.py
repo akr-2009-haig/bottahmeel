@@ -207,6 +207,28 @@ YDL_BASE_OPTS = {
     'fragment_retries': 3,
 }
 
+
+def _apply_cookie_options(opts: dict[str, Any]) -> None:
+    settings = load_settings()
+    cookies_file = settings.ytdlp_cookies_file
+    cookies_from_browser = settings.ytdlp_cookies_from_browser
+
+    if cookies_file:
+        if os.path.exists(cookies_file):
+            opts["cookiefile"] = cookies_file
+        else:
+            logger.warning("YTDLP_COOKIES_FILE is set but does not exist: %s", cookies_file)
+
+    if cookies_from_browser:
+        browser_name, _, profile = cookies_from_browser.partition(":")
+        browser_name = browser_name.strip().lower()
+        profile = profile.strip()
+        if browser_name:
+            opts["cookiesfrombrowser"] = (browser_name, profile) if profile else (browser_name,)
+        else:
+            logger.warning("Ignoring invalid YTDLP_COOKIES_FROM_BROWSER=%s", cookies_from_browser)
+
+
 PLATFORM_OPTS: dict = {
     "youtube": {
         'format': 'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best[height<=720]/best',
@@ -305,6 +327,7 @@ async def download_media(url: str, platform: str = "unknown", *, download_mode: 
         opts['format'] = 'bestaudio[ext=m4a]/bestaudio/best'
     elif 'format' not in opts:
         opts['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+    _apply_cookie_options(opts)
 
     loop = asyncio.get_event_loop()
 
@@ -408,6 +431,7 @@ async def extract_media_info(url: str, platform: str = "unknown", *, requested_m
         opts["format"] = "bestaudio[ext=m4a]/bestaudio/best"
     elif requested_mode == "fingerprint":
         opts["format"] = "bestaudio[ext=m4a]/bestaudio/best"
+    _apply_cookie_options(opts)
 
     loop = asyncio.get_event_loop()
 

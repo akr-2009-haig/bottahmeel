@@ -50,6 +50,15 @@ curl http://127.0.0.1:8081/queuez
 - `BOT_MODE=webhook`
 - `QUEUE_BACKEND=redis`
 
+## Optional: authenticated downloads via cookies (YouTube/TikTok/Instagram)
+
+عند ظهور أخطاء `private/login required` يمكن تمرير كوكيز للـ `yt-dlp`:
+
+- `YTDLP_COOKIES_FILE=/path/to/cookies.txt` (صيغة Netscape)
+- أو `YTDLP_COOKIES_FROM_BROWSER=firefox:default-release` (أو `chrome`, `edge`, ... حسب البيئة)
+
+> يفضّل استخدام متغير واحد فقط. إذا لم يكن ملف الكوكيز موجوداً سيستمر البوت بالعمل مع تحذير في السجلات.
+
 ## Webhook
 
 - المسار الافتراضي: `/telegram/webhook`

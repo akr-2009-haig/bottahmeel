@@ -111,3 +111,15 @@ class SettingsTests(unittest.TestCase):
         }, clear=True):
             settings = load_settings()
             self.assertEqual(settings.mode, RuntimeMode.POLLING)
+
+    def test_ytdlp_cookie_settings_are_loaded(self):
+        with patch.dict(os.environ, {
+            "BOT_MODE": RuntimeMode.POLLING.value,
+            "TELEGRAM_BOT_TOKEN": "token",
+            "DATABASE_URL": "sqlite:///test.db",
+            "YTDLP_COOKIES_FILE": "/tmp/cookies.txt",
+            "YTDLP_COOKIES_FROM_BROWSER": "firefox:default-release",
+        }, clear=True):
+            settings = load_settings()
+            self.assertEqual(settings.ytdlp_cookies_file, "/tmp/cookies.txt")
+            self.assertEqual(settings.ytdlp_cookies_from_browser, "firefox:default-release")
