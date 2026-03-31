@@ -232,6 +232,15 @@ def _apply_cookie_options(opts: dict[str, Any]) -> None:
 PLATFORM_OPTS: dict = {
     "youtube": {
         'format': 'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best[height<=720]/best',
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'web'],
+                'player_skip': ['webpage', 'configs'],
+            },
+            'youtubetab': {
+                'skip': ['webpage'],
+            },
+        },
     },
     "twitter": {
         'format': 'best[ext=mp4]/best',
@@ -382,8 +391,20 @@ def is_instagram_profile_url(url: str) -> bool:
 
 
 def classify_extraction_error(exc: Exception) -> str:
-    message = str(exc).lower()
-    if any(marker in message for marker in ("private", "login required", "sign in", "not authorized", "forbidden")):
+    normalized_message = str(exc).lower().replace("’", "'")
+    if any(
+        marker in normalized_message
+        for marker in (
+            "private",
+            "login required",
+            "sign in",
+            "confirm you're not a bot",
+            "not authorized",
+            "forbidden",
+            "cookies-from-browser",
+            "use --cookies",
+        )
+    ):
         return "private"
     if any(marker in message for marker in ("story unavailable", "story has expired", "expired", "no longer available")):
         return "expired"

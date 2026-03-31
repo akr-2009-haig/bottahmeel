@@ -180,7 +180,7 @@ class UserFlowTests(unittest.IsolatedAsyncioTestCase):
             patch.object(user_handler, "SessionLocal", return_value=db),
             patch.object(user_handler, "get_setting", side_effect=_settings_side_effect({
                 "subscription_enabled": "false",
-                "downloading_message": "جارٍ التحميل",
+                "downloading_message": "⏳ تم استلام الرابط وإضافته للمعالجة. سيتم إرسال النتيجة فور اكتمال التحميل.",
             })),
             patch.object(user_handler, "get_reply_button_response", return_value=None),
             patch.object(user_handler, "check_download_rate_limit", return_value=(True, 0)),
@@ -188,7 +188,7 @@ class UserFlowTests(unittest.IsolatedAsyncioTestCase):
         ):
             await user_handler.message_handler(update, context)
 
-        message.reply_text.assert_awaited_once_with("⏰┇يرجى الانتظار، يتم قياس حجم التحميل...")
+        message.reply_text.assert_awaited_once_with("⏳ تم استلام الرابط وإضافته للمعالجة. سيتم إرسال النتيجة فور اكتمال التحميل.")
         enqueue_download.assert_called_once_with(
             user_id=15,
             chat_id=601,
@@ -199,6 +199,102 @@ class UserFlowTests(unittest.IsolatedAsyncioTestCase):
             download_mode="default",
             caption_override=None,
         )
+        db.close.assert_called_once()
+
+    async def test_message_handler_falls_back_to_local_download_when_no_redis_worker_is_active(self):
+        db_user = SimpleNamespace(id=31, status=user_handler.UserStatus.ACTIVE, language_code="ar", is_admin=False)
+        db = _db_with_user(db_user)
+        wait_msg = SimpleNamespace(message_id=92, edit_text=AsyncMock())
+        message = SimpleNamespace(
+            text="https://www.tiktok.com/@tester/video/1234567890",
+            reply_photo=AsyncMock(),
+            reply_text=AsyncMock(return_value=wait_msg),
+        )
+        update = SimpleNamespace(
+            message=message,
+            effective_user=SimpleNamespace(id=57, username="tester", first_name="Test", last_name="", language_code="ar"),
+            effective_chat=SimpleNamespace(id=602),
+        )
+        context = SimpleNamespace(
+            bot=SimpleNamespace(get_me=AsyncMock(return_value=SimpleNamespace(username="UnitBot"))),
+            user_data={},
+            bot_data={},
+        )
+
+        with (
+            patch.object(user_handler, "SessionLocal", return_value=db),
+            patch.object(user_handler, "get_setting", side_effect=_settings_side_effect({
+                "subscription_enabled": "false",
+                "downloading_message": "⏳ تم استلام الرابط وإضافته للمعالجة. سيتم إرسال النتيجة فور اكتمال التحميل.",
+            })),
+            patch.object(user_handler, "get_reply_button_response", return_value=None),
+            patch.object(user_handler, "check_download_rate_limit", return_value=(True, 0)),
+            patch.object(user_handler, "_should_process_download_locally", return_value=True),
+            patch.object(user_handler, "_schedule_local_download") as schedule_local_download,
+            patch.object(user_handler.DownloadService, "enqueue_download") as enqueue_download,
+        ):
+            await user_handler.message_handler(update, context)
+
+        enqueue_download.assert_not_called()
+        schedule_local_download.assert_called_once_with(context, {
+            "user_id": 31,
+            "chat_id": 602,
+            "url": "https://www.tiktok.com/@tester/video/1234567890",
+            "platform": "tiktok",
+            "lang": "ar",
+            "status_message_id": 92,
+            "download_mode": "default",
+            "caption_override": None,
+        })
+        db.close.assert_called_once()
+
+    async def test_message_handler_falls_back_to_local_download_when_redis_enqueue_fails(self):
+        db_user = SimpleNamespace(id=32, status=user_handler.UserStatus.ACTIVE, language_code="ar", is_admin=False)
+        db = _db_with_user(db_user)
+        wait_msg = SimpleNamespace(message_id=93, edit_text=AsyncMock())
+        message = SimpleNamespace(
+            text="https://www.tiktok.com/@tester/video/1234567890",
+            reply_photo=AsyncMock(),
+            reply_text=AsyncMock(return_value=wait_msg),
+        )
+        update = SimpleNamespace(
+            message=message,
+            effective_user=SimpleNamespace(id=58, username="tester", first_name="Test", last_name="", language_code="ar"),
+            effective_chat=SimpleNamespace(id=603),
+        )
+        context = SimpleNamespace(
+            bot=SimpleNamespace(get_me=AsyncMock(return_value=SimpleNamespace(username="UnitBot"))),
+            user_data={},
+            bot_data={},
+        )
+
+        with (
+            patch.object(user_handler, "SessionLocal", return_value=db),
+            patch.object(user_handler, "get_setting", side_effect=_settings_side_effect({
+                "subscription_enabled": "false",
+                "downloading_message": "⏳ تم استلام الرابط وإضافته للمعالجة. سيتم إرسال النتيجة فور اكتمال التحميل.",
+            })),
+            patch.object(user_handler, "get_reply_button_response", return_value=None),
+            patch.object(user_handler, "check_download_rate_limit", return_value=(True, 0)),
+            patch.object(user_handler, "_should_process_download_locally", return_value=False),
+            patch.object(user_handler, "load_settings", return_value=SimpleNamespace(queue_backend="redis")),
+            patch.object(user_handler, "_schedule_local_download") as schedule_local_download,
+            patch.object(user_handler.DownloadService, "enqueue_download", side_effect=RuntimeError("redis broker down")) as enqueue_download,
+        ):
+            await user_handler.message_handler(update, context)
+
+        enqueue_download.assert_called_once()
+        schedule_local_download.assert_called_once_with(context, {
+            "user_id": 32,
+            "chat_id": 603,
+            "url": "https://www.tiktok.com/@tester/video/1234567890",
+            "platform": "tiktok",
+            "lang": "ar",
+            "status_message_id": 93,
+            "download_mode": "default",
+            "caption_override": None,
+        })
+        wait_msg.edit_text.assert_not_awaited()
         db.close.assert_called_once()
 
     async def test_message_handler_shows_instagram_profile_menu(self):
