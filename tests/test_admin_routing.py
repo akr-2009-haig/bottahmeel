@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from bot.admin import admin_handler
+from bot.admin import admin_handler, ui_handler
 from bot.app import bootstrap
 from bot.handlers import user_handler
 
@@ -207,6 +207,115 @@ class AdminRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("sched_data", context.user_data)
         query.edit_message_text.assert_awaited_once()
         db.close.assert_called_once()
+
+    async def test_admin_callback_sub_enable_shows_error_when_setting_save_fails(self):
+        query = SimpleNamespace(
+            data="sub_enable",
+            from_user=SimpleNamespace(id=1),
+            answer=AsyncMock(),
+            edit_message_text=AsyncMock(),
+        )
+        update = SimpleNamespace(callback_query=query)
+        context = SimpleNamespace(user_data={})
+        db = MagicMock()
+
+        with (
+            patch.object(admin_handler, "SessionLocal", return_value=db),
+            patch.object(admin_handler, "is_admin", return_value=True),
+            patch.object(admin_handler, "dispatch_ui_callback", new=AsyncMock(return_value=False)),
+            patch.object(admin_handler, "dispatch_sub_callback", new=AsyncMock(return_value=False)),
+            patch.object(admin_handler, "_setting_saved", return_value=False),
+        ):
+            await admin_handler.admin_callback(update, context)
+
+        query.edit_message_text.assert_not_awaited()
+        query.answer.assert_any_await("❌ تعذر حفظ إعداد الاشتراك الإجباري.", show_alert=True)
+        db.close.assert_called_once()
+
+    async def test_admin_message_handler_keeps_waiting_when_setting_save_fails(self):
+        update = SimpleNamespace(
+            effective_user=SimpleNamespace(id=1),
+            message=SimpleNamespace(text="new value", reply_text=AsyncMock()),
+        )
+        context = SimpleNamespace(user_data={"waiting_for": "edit_setting_start_message"})
+        db = MagicMock()
+
+        with (
+            patch.object(admin_handler, "SessionLocal", return_value=db),
+            patch.object(admin_handler, "is_admin", return_value=True),
+            patch.object(admin_handler, "_setting_saved", return_value=False),
+        ):
+            await admin_handler.admin_message_handler(update, context)
+
+        update.message.reply_text.assert_awaited_once_with("❌ تعذر حفظ الإعداد. أعد المحاولة.")
+        self.assertEqual(context.user_data["waiting_for"], "edit_setting_start_message")
+        db.close.assert_called_once()
+
+
+class AdminUiPersistenceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_ui_activity_set_shows_error_when_save_fails(self):
+        query = SimpleNamespace(answer=AsyncMock())
+        context = SimpleNamespace(user_data={})
+
+        with (
+            patch.object(ui_handler, "_setting_saved", return_value=False),
+            patch.object(ui_handler, "ui_activity_main", new=AsyncMock()) as ui_activity_main,
+        ):
+            await ui_handler.ui_activity_set(query, context, "typing")
+
+        ui_activity_main.assert_not_awaited()
+        query.answer.assert_awaited_once_with("❌ تعذر حفظ حالة النشاط. حاول مرة أخرى.", show_alert=True)
+
+    async def test_ui_handle_message_keeps_waiting_when_message_save_fails(self):
+        update = SimpleNamespace(message=SimpleNamespace(text="new text", reply_text=AsyncMock()))
+        context = SimpleNamespace(user_data={
+            "waiting_for": "ui_msg_text_start",
+            "ui_msg_key": "start_message",
+        })
+
+        with patch.object(ui_handler, "_setting_saved", return_value=False):
+            handled = await ui_handler.ui_handle_message(update, context)
+
+        self.assertTrue(handled)
+        update.message.reply_text.assert_awaited_once_with("❌ تعذر حفظ الرسالة. أعد المحاولة.")
+        self.assertEqual(context.user_data["waiting_for"], "ui_msg_text_start")
+        self.assertEqual(context.user_data["ui_msg_key"], "start_message")
+
+    async def test_ui_handle_message_button_edit_requires_existing_button(self):
+        update = SimpleNamespace(message=SimpleNamespace(text="زر جديد", reply_text=AsyncMock()))
+        context = SimpleNamespace(user_data={"waiting_for": "ui_btn_new_label_5"})
+        db = MagicMock()
+        db.query.return_value.filter_by.return_value.first.return_value = None
+
+        with patch.object(ui_handler, "SessionLocal", return_value=db):
+            handled = await ui_handler.ui_handle_message(update, context)
+
+        self.assertTrue(handled)
+        update.message.reply_text.assert_awaited_once_with(
+            "❌ تعذر تحديث عنوان الزر. تأكد أن الزر ما زال موجوداً ثم حاول مرة أخرى."
+        )
+        self.assertNotIn("waiting_for", context.user_data)
+        db.close.assert_called_once()
+
+    async def test_ui_handle_message_button_edit_success_offers_detail_link(self):
+        update = SimpleNamespace(message=SimpleNamespace(text="زر جديد", reply_text=AsyncMock()))
+        context = SimpleNamespace(user_data={"waiting_for": "ui_btn_new_label_7"})
+        btn = SimpleNamespace(label="قديم", name="قديم")
+        db = MagicMock()
+        db.query.return_value.filter_by.return_value.first.return_value = btn
+
+        with patch.object(ui_handler, "SessionLocal", return_value=db):
+            handled = await ui_handler.ui_handle_message(update, context)
+
+        self.assertTrue(handled)
+        self.assertEqual(btn.label, "زر جديد")
+        self.assertEqual(btn.name, "زر جديد")
+        db.commit.assert_called_once()
+        kwargs = update.message.reply_text.await_args.kwargs
+        self.assertEqual(kwargs["parse_mode"], "Markdown")
+        markup = kwargs["reply_markup"]
+        self.assertEqual(markup.inline_keyboard[0][0].callback_data, "ui_btn_detail_7")
+        self.assertEqual(markup.inline_keyboard[1][0].callback_data, "adm_main")
 
 
 class SubscriptionKeyboardTests(unittest.TestCase):

@@ -37,6 +37,10 @@ from .ui_keyboards import (
 
 logger = logging.getLogger(__name__)
 
+
+def _setting_saved(key: str, value: str) -> bool:
+    return set_setting(key, value)
+
 def _get_platform_label(platform: str) -> str:
     from bot.utils.platforms import PLATFORMS
     info = PLATFORMS.get(platform, {})
@@ -1122,10 +1126,12 @@ async def ui_activity_main(query, context):
 
 
 async def ui_activity_set(query, context, activity: str):
-    set_setting("activity_status", activity)
+    if not _setting_saved("activity_status", activity):
+        await query.answer("❌ تعذر حفظ حالة النشاط. حاول مرة أخرى.", show_alert=True)
+        return
     label = ACTIVITY_LABELS.get(activity, activity)
-    await query.answer(f"✅ تم تغيير حالة النشاط إلى: {label}", show_alert=True)
     await ui_activity_main(query, context)
+    await query.answer(f"✅ تم تغيير حالة النشاط إلى: {label}")
 
 
 async def ui_langs_main(query, context):
@@ -1211,12 +1217,18 @@ async def ui_avail_toggle(query, context, code: str, page: int = 0):
             await query.answer("🔒 اللغات المدمجة لا يمكن تعطيلها", show_alert=True)
             return
         lang.is_enabled = not lang.is_enabled
-        db.commit()
+        try:
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            logger.error("Failed to update language availability for %s: %s", code, exc)
+            await query.answer("❌ تعذر حفظ حالة اللغة. حاول مرة أخرى.", show_alert=True)
+            return
         status = "✅ مفعّلة" if lang.is_enabled else "❌ معطّلة"
-        await query.answer(f"{lang.flag} {lang.name} {status}")
     finally:
         db.close()
     await ui_avail_langs(query, context, page)
+    await query.answer(f"{lang.flag} {lang.name} {status}")
 
 
 async def ui_lang_edit(query, context, lang: str):
@@ -1262,10 +1274,12 @@ async def ui_format_main(query, context):
 
 
 async def ui_format_set(query, context, fmt: str):
-    set_setting("text_format", fmt)
+    if not _setting_saved("text_format", fmt):
+        await query.answer("❌ تعذر حفظ تنسيق النص. حاول مرة أخرى.", show_alert=True)
+        return
     label = FORMAT_LABELS.get(fmt, fmt)
-    await query.answer(f"✅ تم تغيير تنسيق النص إلى: {label}", show_alert=True)
     await ui_format_main(query, context)
+    await query.answer(f"✅ تم تغيير تنسيق النص إلى: {label}")
 
 
 async def ui_platforms_main(query, context):
@@ -1313,10 +1327,12 @@ async def ui_platform_detail(query, context, platform: str):
 
 async def ui_platform_toggle(query, context, platform: str, enable: bool):
     label = _get_platform_label(platform)
-    set_setting(f"{platform}_enabled", "true" if enable else "false")
+    if not _setting_saved(f"{platform}_enabled", "true" if enable else "false"):
+        await query.answer(f"❌ تعذر تحديث حالة {label}. حاول مرة أخرى.", show_alert=True)
+        return
     action = "تفعيل" if enable else "تعطيل"
-    await query.answer(f"✅ تم {action} {label}", show_alert=True)
     await ui_platform_detail(query, context, platform)
+    await query.answer(f"✅ تم {action} {label}")
 
 
 async def ui_platform_editmsg(query, context, platform: str):
@@ -1522,12 +1538,19 @@ async def ui_reset_confirm(query, context):
 
 
 async def ui_reset_execute(query, context):
+    failed_keys = []
     for key, value in DEFAULT_MESSAGES.items():
-        set_setting(key, value)
-    set_setting("activity_status", "upload_video")
-    set_setting("text_format", "none")
-    await query.answer("✅ تم إعادة ضبط الواجهة بنجاح", show_alert=True)
+        if not _setting_saved(key, value):
+            failed_keys.append(key)
+    if not _setting_saved("activity_status", "upload_video"):
+        failed_keys.append("activity_status")
+    if not _setting_saved("text_format", "none"):
+        failed_keys.append("text_format")
+    if failed_keys:
+        await query.answer("❌ تعذر إعادة ضبط بعض إعدادات الواجهة. حاول مرة أخرى.", show_alert=True)
+        return
     await ui_main(query, context)
+    await query.answer("✅ تم إعادة ضبط الواجهة بنجاح")
 
 
 async def ui_handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -1542,7 +1565,9 @@ async def ui_handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         msg_key = waiting.replace("ui_msg_text_", "")
         db_key = context.user_data.get("ui_msg_key", "")
         if db_key:
-            set_setting(db_key, text)
+            if not _setting_saved(db_key, text):
+                await update.message.reply_text("❌ تعذر حفظ الرسالة. أعد المحاولة.")
+                return True
             _, label, _ = MESSAGE_LABELS.get(msg_key, (db_key, msg_key, False))
             await update.message.reply_text(
                 f"✅ **تم تحديث {label}**\n\n📝 النص الجديد:\n`{text[:200]}`",
@@ -1661,16 +1686,30 @@ async def ui_handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         except ValueError:
             return True
         db = SessionLocal()
+        updated = False
         try:
             wa = db.query(WebAppButton).filter_by(id=wa_id).first()
             if wa:
                 wa.label = text
-                db.commit()
+                try:
+                    db.commit()
+                    updated = True
+                except Exception as exc:
+                    db.rollback()
+                    logger.error("Failed to update Web App label %s: %s", wa_id, exc)
         finally:
             db.close()
+        if not updated:
+            context.user_data.pop("waiting_for", None)
+            await update.message.reply_text("❌ تعذر تحديث عنوان التطبيق. تأكد أن العنصر ما زال موجوداً ثم حاول مرة أخرى.")
+            return True
         context.user_data.pop("waiting_for", None)
         await update.message.reply_text(
             f"✅ **تم تحديث عنوان التطبيق #{wa_id}**\n\nالعنوان الجديد: **{text}**",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("👀 عرض التفاصيل", callback_data=f"ui_wa_detail_{wa_id}")],
+                [InlineKeyboardButton("🏠 الرئيسية", callback_data="adm_main")],
+            ]),
             parse_mode="Markdown"
         )
         return True
@@ -1684,16 +1723,30 @@ async def ui_handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await update.message.reply_text("❌ الرابط يجب أن يبدأ بـ https://")
             return True
         db = SessionLocal()
+        updated = False
         try:
             wa = db.query(WebAppButton).filter_by(id=wa_id).first()
             if wa:
                 wa.url = text
-                db.commit()
+                try:
+                    db.commit()
+                    updated = True
+                except Exception as exc:
+                    db.rollback()
+                    logger.error("Failed to update Web App URL %s: %s", wa_id, exc)
         finally:
             db.close()
+        if not updated:
+            context.user_data.pop("waiting_for", None)
+            await update.message.reply_text("❌ تعذر تحديث رابط التطبيق. تأكد أن العنصر ما زال موجوداً ثم حاول مرة أخرى.")
+            return True
         context.user_data.pop("waiting_for", None)
         await update.message.reply_text(
             f"✅ **تم تحديث رابط التطبيق #{wa_id}**",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("👀 عرض التفاصيل", callback_data=f"ui_wa_detail_{wa_id}")],
+                [InlineKeyboardButton("🏠 الرئيسية", callback_data="adm_main")],
+            ]),
             parse_mode="Markdown"
         )
         return True
@@ -1704,17 +1757,31 @@ async def ui_handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         except ValueError:
             return True
         db = SessionLocal()
+        updated = False
         try:
             btn = db.query(BotButton).filter_by(id=btn_id).first()
             if btn:
                 btn.label = text
                 btn.name = text
-                db.commit()
+                try:
+                    db.commit()
+                    updated = True
+                except Exception as exc:
+                    db.rollback()
+                    logger.error("Failed to update button label %s: %s", btn_id, exc)
         finally:
             db.close()
+        if not updated:
+            context.user_data.pop("waiting_for", None)
+            await update.message.reply_text("❌ تعذر تحديث عنوان الزر. تأكد أن الزر ما زال موجوداً ثم حاول مرة أخرى.")
+            return True
         context.user_data.pop("waiting_for", None)
         await update.message.reply_text(
             f"✅ **تم تحديث عنوان الزر #{btn_id}**\n\nالعنوان الجديد: **{text}**",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("👀 عرض التفاصيل", callback_data=f"ui_btn_detail_{btn_id}")],
+                [InlineKeyboardButton("🏠 الرئيسية", callback_data="adm_main")],
+            ]),
             parse_mode="Markdown"
         )
         return True
@@ -1729,17 +1796,32 @@ async def ui_handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await update.message.reply_text("❌ الرابط يجب أن يبدأ بـ https://")
             return True
         db = SessionLocal()
+        updated = False
         try:
             btn = db.query(BotButton).filter_by(id=btn_id).first()
             if btn:
                 btn.data = text
-                db.commit()
+                try:
+                    db.commit()
+                    updated = True
+                except Exception as exc:
+                    db.rollback()
+                    logger.error("Failed to update button data %s: %s", btn_id, exc)
         finally:
             db.close()
+        if not updated:
+            context.user_data.pop("waiting_for", None)
+            context.user_data.pop("ui_btn_edit_type", None)
+            await update.message.reply_text("❌ تعذر تحديث بيانات الزر. تأكد أن الزر ما زال موجوداً ثم حاول مرة أخرى.")
+            return True
         context.user_data.pop("waiting_for", None)
         context.user_data.pop("ui_btn_edit_type", None)
         await update.message.reply_text(
             f"✅ **تم تحديث بيانات الزر #{btn_id}**",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("👀 عرض التفاصيل", callback_data=f"ui_btn_detail_{btn_id}")],
+                [InlineKeyboardButton("🏠 الرئيسية", callback_data="adm_main")],
+            ]),
             parse_mode="Markdown"
         )
         return True
@@ -1747,7 +1829,9 @@ async def ui_handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if waiting.startswith("ui_lang_tr_"):
         db_key = context.user_data.get("ui_lang_db_key", "")
         if db_key:
-            set_setting(db_key, text)
+            if not _setting_saved(db_key, text):
+                await update.message.reply_text("❌ تعذر حفظ الترجمة. أعد المحاولة.")
+                return True
             await update.message.reply_text(
                 f"✅ **تم حفظ الترجمة**\n\n`{text[:200]}`",
                 parse_mode="Markdown"
@@ -1759,7 +1843,9 @@ async def ui_handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if waiting.startswith("ui_plat_msg_"):
         db_key = context.user_data.get("ui_plat_db_key", "")
         if db_key:
-            set_setting(db_key, text)
+            if not _setting_saved(db_key, text):
+                await update.message.reply_text("❌ تعذر حفظ رسالة المنصة. أعد المحاولة.")
+                return True
             await update.message.reply_text(
                 f"✅ **تم تحديث رسالة المنصة**\n\n`{text[:200]}`",
                 parse_mode="Markdown"
@@ -1771,7 +1857,9 @@ async def ui_handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if waiting.startswith("ui_caption_"):
         db_key = context.user_data.get("ui_cap_db_key", "")
         if db_key:
-            set_setting(db_key, text)
+            if not _setting_saved(db_key, text):
+                await update.message.reply_text("❌ تعذر حفظ الـ Caption. أعد المحاولة.")
+                return True
             await update.message.reply_text(
                 f"✅ **تم تحديث Caption**\n\n`{text[:200]}`",
                 parse_mode="Markdown"
