@@ -8,6 +8,7 @@ from bot.utils.platforms import (
     PLATFORMS,
     _apply_cookie_options,
     all_platforms,
+    classify_extraction_error,
     detect_platform,
     get_platform_info,
 )
@@ -48,6 +49,12 @@ class PlatformSupportTests(unittest.TestCase):
         missing = sorted(platform for platform in all_platforms() if platform not in PLATFORM_OPTS)
         self.assertEqual(missing, [])
 
+    def test_youtube_downloads_set_extractor_args_to_reduce_server_side_sign_in_checks(self):
+        extractor_args = PLATFORM_OPTS["youtube"]["extractor_args"]
+        self.assertEqual(extractor_args["youtube"]["player_client"], ["android", "web"])
+        self.assertEqual(extractor_args["youtube"]["player_skip"], ["webpage", "configs"])
+        self.assertEqual(extractor_args["youtubetab"]["skip"], ["webpage"])
+
     def test_apply_cookie_options_uses_cookiefile_and_browser_profile(self):
         with NamedTemporaryFile() as cookie_file:
             opts = {}
@@ -58,3 +65,9 @@ class PlatformSupportTests(unittest.TestCase):
                 _apply_cookie_options(opts)
             self.assertEqual(opts["cookiefile"], cookie_file.name)
             self.assertEqual(opts["cookiesfrombrowser"], ("firefox", "default-release"))
+
+    def test_classify_extraction_error_treats_youtube_bot_check_as_login_required(self):
+        self.assertEqual(
+            classify_extraction_error(RuntimeError("Sign in to confirm you’re not a bot. Use --cookies-from-browser or --cookies.")),
+            "private",
+        )

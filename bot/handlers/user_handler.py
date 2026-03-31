@@ -2,6 +2,7 @@ import logging
 import os
 import json
 import asyncio
+from datetime import datetime, timedelta, timezone
 from html import escape
 from io import BytesIO
 from uuid import uuid4
@@ -11,7 +12,8 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRe
 from telegram.ext import ContextTypes
 from PIL import Image
 
-from bot.database import Download, SessionLocal, SubscriptionChannel, User, UserStatus, BotLanguage, get_setting
+from bot.config import load_settings
+from bot.database import Download, SessionLocal, SubscriptionChannel, User, UserStatus, BotLanguage, WorkerHeartbeat, get_setting
 from bot.locales import get_string
 from bot.security import check_download_rate_limit
 from bot.services import DownloadService
@@ -95,6 +97,53 @@ def build_lang_keyboard(current_lang: str = "ar"):
 
     rows = [btns[i:i+2] for i in range(0, len(btns), 2)]
     return InlineKeyboardMarkup(rows)
+
+
+def _has_active_redis_worker() -> bool:
+    settings = load_settings()
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=max(settings.worker_heartbeat_ttl_seconds, 1))
+    db = SessionLocal()
+    try:
+        return (
+            db.query(WorkerHeartbeat)
+            .filter(WorkerHeartbeat.status != "stopped")
+            .filter(WorkerHeartbeat.last_seen.is_not(None))
+            .filter(WorkerHeartbeat.last_seen >= cutoff)
+            .first()
+            is not None
+        )
+    except Exception as exc:
+        logger.warning("Failed to inspect worker heartbeat for local download fallback: %s", exc)
+        return False
+    finally:
+        db.close()
+
+
+def _should_process_download_locally() -> bool:
+    settings = load_settings()
+    return settings.queue_backend == "redis" and not _has_active_redis_worker()
+
+
+def _schedule_local_download(context: ContextTypes.DEFAULT_TYPE, payload: dict) -> None:
+    from bot.workers.runner import _download_failure_message, _process_download, _safe_edit_message
+
+    async def _runner() -> None:
+        try:
+            await _process_download(context.bot, payload)
+        except Exception as exc:
+            logger.exception("Local download fallback failed for chat_id=%s url=%s: %s", payload.get("chat_id"), payload.get("url"), exc)
+            await _safe_edit_message(
+                context.bot,
+                int(payload.get("chat_id") or 0),
+                payload.get("status_message_id"),
+                _download_failure_message(payload.get("lang") or "ar", "generic"),
+            )
+
+    application = getattr(context, "application", None)
+    if application is not None:
+        application.create_task(_runner())
+    else:
+        asyncio.create_task(_runner())
 
 
 async def _send_message(target, text: str, main_markup, extra_markup, context=None):
@@ -375,7 +424,26 @@ async def _enqueue_download_request(
     wait_msg = await reply_target.reply_text(
         waiting_text_override or get_lang_setting("downloading_message", lang, get_string("downloading", lang))
     )
+    payload = {
+        "user_id": user_id,
+        "chat_id": chat_id,
+        "url": url,
+        "platform": platform,
+        "lang": lang,
+        "status_message_id": wait_msg.message_id,
+        "download_mode": download_mode,
+        "caption_override": caption_override,
+    }
     try:
+        if _should_process_download_locally():
+            logger.warning(
+                "No active Redis worker detected; processing download locally user=%s platform=%s mode=%s",
+                user_id,
+                platform,
+                download_mode,
+            )
+            _schedule_local_download(context, payload)
+            return None
         job_id = DownloadService.enqueue_download(
             user_id=user_id,
             chat_id=chat_id,
@@ -390,6 +458,15 @@ async def _enqueue_download_request(
         return job_id
     except Exception as exc:
         logger.exception("Failed to enqueue download job: %s", exc)
+        if load_settings().queue_backend == "redis":
+            logger.warning(
+                "Redis enqueue failed; falling back to local download processing user=%s platform=%s mode=%s",
+                user_id,
+                platform,
+                download_mode,
+            )
+            _schedule_local_download(context, payload)
+            return None
         await wait_msg.edit_text(get_lang_setting("error_message", lang, get_string("error", lang)))
         return None
 

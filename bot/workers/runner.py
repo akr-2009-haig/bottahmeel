@@ -121,9 +121,9 @@ def _download_failure_message(lang: str, reason: str) -> str:
     if reason == "private":
         key = "download_private_error"
         defaults = {
-            "ar": "❌ هذا المحتوى خاص أو يتطلب تسجيل الدخول.",
-            "en": "❌ This content is private or requires login.",
-            "ru": "❌ Этот контент приватный или требует входа.",
+            "ar": "❌ هذا المحتوى خاص أو يتطلب جلسة yt-dlp مسجلة الدخول. إذا كان الرابط عاماً ففعّل كوكيز yt-dlp ثم أعد المحاولة.",
+            "en": "❌ This content is private or needs an authenticated yt-dlp session. If the link is public, enable yt-dlp cookies and try again.",
+            "ru": "❌ Этот контент приватный или требует авторизованную сессию yt-dlp. Если ссылка публичная, включите cookies для yt-dlp и повторите попытку.",
         }
     elif reason == "expired":
         key = "download_expired_error"

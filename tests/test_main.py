@@ -37,6 +37,10 @@ class MainEntrypointTests(unittest.TestCase):
             rate_limit_requests_per_window=1,
             rate_limit_window_seconds=1,
             rate_limit_block_seconds=1,
+            download_timeout_seconds=60,
+            max_upload_file_size_mb=49,
+            ytdlp_cookies_file="",
+            ytdlp_cookies_from_browser="",
         )
         defaults.update(overrides)
         return AppSettings(**defaults)
