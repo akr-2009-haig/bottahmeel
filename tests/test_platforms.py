@@ -1,6 +1,16 @@
 import unittest
+from tempfile import NamedTemporaryFile
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from bot.utils.platforms import PLATFORM_OPTS, PLATFORMS, all_platforms, detect_platform, get_platform_info
+from bot.utils.platforms import (
+    PLATFORM_OPTS,
+    PLATFORMS,
+    _apply_cookie_options,
+    all_platforms,
+    detect_platform,
+    get_platform_info,
+)
 
 
 class PlatformSupportTests(unittest.TestCase):
@@ -37,3 +47,14 @@ class PlatformSupportTests(unittest.TestCase):
     def test_all_registered_platforms_have_explicit_download_formats(self):
         missing = sorted(platform for platform in all_platforms() if platform not in PLATFORM_OPTS)
         self.assertEqual(missing, [])
+
+    def test_apply_cookie_options_uses_cookiefile_and_browser_profile(self):
+        with NamedTemporaryFile() as cookie_file:
+            opts = {}
+            with patch("bot.utils.platforms.load_settings", return_value=SimpleNamespace(
+                ytdlp_cookies_file=cookie_file.name,
+                ytdlp_cookies_from_browser="firefox:default-release",
+            )):
+                _apply_cookie_options(opts)
+            self.assertEqual(opts["cookiefile"], cookie_file.name)
+            self.assertEqual(opts["cookiesfrombrowser"], ("firefox", "default-release"))
