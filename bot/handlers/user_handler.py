@@ -307,13 +307,6 @@ def _youtube_keyboard(token: str, lang: str) -> InlineKeyboardMarkup:
     ])
 
 
-def _youtube_quality_keyboard(token: str) -> InlineKeyboardMarkup:
-    qualities = ("144", "240", "360", "480")
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(quality, callback_data=f"ytdlq:{token}:{quality}") for quality in qualities]
-    ])
-
-
 def _instagram_profile_keyboard(token: str, lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(get_string("ig_button_info", lang), callback_data=f"igpf:{token}:info")],
@@ -721,16 +714,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.message.reply_text(get_string("collection_generic_error", lang))
                 return
             if action == "video":
-                await query.message.reply_text(
-                    get_string("yt_quality_prompt", lang),
-                    reply_markup=_youtube_quality_keyboard(token),
-                )
-                return
-            mode = "default"
-            if action == "audio":
-                mode = "audio"
-            elif action == "fingerprint":
-                mode = "fingerprint"
+                mode = "video_480"
+            else:
+                mode = "default"
+                if action == "audio":
+                    mode = "audio"
+                elif action == "fingerprint":
+                    mode = "fingerprint"
             await _enqueue_download_request(
                 query.message,
                 context,
@@ -742,33 +732,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 download_mode=mode,
                 caption_override=pending.get("caption_override"),
                 waiting_text_override=(
+                    get_string("yt_preparing_video", lang)
+                    if mode.startswith("video_")
+                    else
                     get_string("yt_preparing_audio", lang)
                     if mode == "audio"
                     else get_string("yt_preparing_fingerprint", lang)
                 ),
-            )
-            return
-
-        if data.startswith("ytdlq:"):
-            _, token, quality = data.split(":", 2)
-            pending = _pending_downloads(context).get(token)
-            if not pending:
-                await query.message.reply_text(get_string("collection_generic_error", lang))
-                return
-            if quality not in {"144", "240", "360", "480"}:
-                await query.message.reply_text(get_string("collection_generic_error", lang))
-                return
-            await _enqueue_download_request(
-                query.message,
-                context,
-                user_id=db_user.id,
-                chat_id=query.message.chat_id,
-                url=pending["url"],
-                platform="youtube",
-                lang=lang,
-                download_mode=f"video_{quality}",
-                caption_override=pending.get("caption_override"),
-                waiting_text_override=get_string("yt_preparing_video", lang),
             )
             return
 

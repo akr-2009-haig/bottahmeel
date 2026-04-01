@@ -383,14 +383,15 @@ class UserFlowTests(unittest.IsolatedAsyncioTestCase):
         wait_msg.edit_text.assert_not_awaited()
         db.close.assert_called_once()
 
-    async def test_callback_handler_shows_youtube_quality_buttons_before_video_download(self):
+    async def test_callback_handler_enqueues_youtube_video_without_quality_buttons(self):
         db_user = SimpleNamespace(id=16, status=user_handler.UserStatus.ACTIVE, language_code="ar", is_admin=False)
         db = _db_with_user(db_user)
+        wait_msg = SimpleNamespace(message_id=88, edit_text=AsyncMock())
         query = SimpleNamespace(
             data="ytdl:abc12345:video",
             from_user=SimpleNamespace(id=44),
             answer=AsyncMock(),
-            message=SimpleNamespace(chat_id=702, reply_text=AsyncMock()),
+            message=SimpleNamespace(chat_id=702, reply_text=AsyncMock(return_value=wait_msg)),
         )
         update = SimpleNamespace(callback_query=query)
         context = SimpleNamespace(
@@ -402,28 +403,30 @@ class UserFlowTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(user_handler, "SessionLocal", return_value=db),
             patch.object(user_handler, "get_setting", side_effect=_settings_side_effect({})),
-            patch.object(user_handler.DownloadService, "enqueue_download") as enqueue_download,
+            patch.object(user_handler.DownloadService, "enqueue_download", return_value=321) as enqueue_download,
         ):
             await user_handler.callback_handler(update, context)
 
-        query.message.reply_text.assert_awaited_once()
-        kwargs = query.message.reply_text.await_args.kwargs
-        self.assertEqual(kwargs["reply_markup"].inline_keyboard[0][0].text, "144")
-        self.assertEqual(kwargs["reply_markup"].inline_keyboard[0][1].text, "240")
-        self.assertEqual(kwargs["reply_markup"].inline_keyboard[0][2].text, "360")
-        self.assertEqual(kwargs["reply_markup"].inline_keyboard[0][3].text, "480")
-        enqueue_download.assert_not_called()
+        enqueue_download.assert_called_once_with(
+            user_id=16,
+            chat_id=702,
+            url="https://youtu.be/demo123",
+            platform="youtube",
+            lang="ar",
+            status_message_id=88,
+            download_mode="video_480",
+            caption_override="@UnitBot",
+        )
         db.close.assert_called_once()
 
-    async def test_callback_handler_enqueues_youtube_selected_quality(self):
+    async def test_callback_handler_ignores_legacy_youtube_quality_callback(self):
         db_user = SimpleNamespace(id=17, status=user_handler.UserStatus.ACTIVE, language_code="ar", is_admin=False)
         db = _db_with_user(db_user)
-        wait_msg = SimpleNamespace(message_id=90, edit_text=AsyncMock())
         query = SimpleNamespace(
             data="ytdlq:abc12345:360",
             from_user=SimpleNamespace(id=45),
             answer=AsyncMock(),
-            message=SimpleNamespace(chat_id=703, reply_text=AsyncMock(return_value=wait_msg)),
+            message=SimpleNamespace(chat_id=703, reply_text=AsyncMock()),
         )
         update = SimpleNamespace(callback_query=query)
         context = SimpleNamespace(
@@ -439,16 +442,8 @@ class UserFlowTests(unittest.IsolatedAsyncioTestCase):
         ):
             await user_handler.callback_handler(update, context)
 
-        enqueue_download.assert_called_once_with(
-            user_id=17,
-            chat_id=703,
-            url="https://youtu.be/demo123",
-            platform="youtube",
-            lang="ar",
-            status_message_id=90,
-            download_mode="video_360",
-            caption_override="@UnitBot",
-        )
+        enqueue_download.assert_not_called()
+        query.message.reply_text.assert_not_awaited()
         db.close.assert_called_once()
 
     async def test_callback_handler_sends_instagram_profile_card(self):
