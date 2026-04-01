@@ -381,6 +381,7 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 added_by=query.from_user.id,
             ))
             db.commit()
+            flow["selected_admin_id"] = None
             flow["selected_permissions"] = []
             flow["selected_sections"] = []
             await query.answer("✅ تم إضافة المشرف بنجاح.", show_alert=True)
@@ -855,9 +856,22 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     db.commit()
                     await query.answer("✅ تم حفظ الصلاحيات بنجاح", show_alert=True)
             elif new_admin_id:
+                user_obj = db.query(User).filter_by(telegram_id=new_admin_id).first()
+                _map = {
+                    "manage_users": "users", "add_admins": "admins",
+                    "delete_admins": "admins", "manage_subscription": "subscription",
+                    "manage_channels": "publish", "manage_broadcast": "broadcast",
+                    "manage_scheduled": "scheduled", "manage_groups": "groups",
+                    "manage_antiflood": "antiflood", "view_stats": "stats",
+                    "manage_settings": "settings",
+                }
+                derived_sections = list({_map[p] for p in selected if p in _map})
                 db.add(AdminUser(
                     telegram_id=new_admin_id,
+                    username=user_obj.username if user_obj else None,
+                    first_name=user_obj.first_name if user_obj else None,
                     permissions=selected,
+                    allowed_sections=derived_sections,
                     is_active=True,
                     added_by=query.from_user.id,
                 ))
@@ -1651,9 +1665,11 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
 
-        elif data in ("adm_sub_refresh", "adm_pub_refresh", "adm_grp_refresh", "adm_sched_refresh", "adm_bc_refresh"):
+        elif data == "adm_sub_refresh":
+            await sub3_main(query, context)
+
+        elif data in ("adm_pub_refresh", "adm_grp_refresh", "adm_sched_refresh", "adm_bc_refresh"):
             section_map = {
-                "adm_sub_refresh": ("adm_sub", "📢 **إدارة الاشتراك الإجباري**", subscription_menu_keyboard),
                 "adm_pub_refresh": ("adm_publish", "📡 **قنوات النشر**", publish_menu_keyboard),
                 "adm_grp_refresh": ("adm_groups", "📂 **مجموعات القنوات**", groups_menu_keyboard),
                 "adm_sched_refresh": ("adm_scheduled", "🗓 **النشر المجدول**", scheduled_menu_keyboard),
@@ -1943,7 +1959,11 @@ async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 "✅ تم العثور على المستخدم بنجاح.\n\n"
                 f"- 👤 الاسم: {user_obj.first_name or 'غير معروف'}\n"
                 f"- 🆔 ID: {user_obj.telegram_id}\n"
-                f"- 🔗 Username: @{user_obj.username or 'لا يوجد'}"
+                f"- 🔗 Username: @{user_obj.username or 'لا يوجد'}",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("➕ متابعة إضافة المشرف", callback_data="admins_add_menu")],
+                    [InlineKeyboardButton("❌ إلغاء", callback_data="admins_cancel_add")],
+                ])
             )
             return
 
