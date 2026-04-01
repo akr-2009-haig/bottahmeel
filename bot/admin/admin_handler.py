@@ -81,24 +81,26 @@ def _setting_saved(key: str, value: str) -> bool:
     return set_setting(key, value)
 
 
+PERM_TO_SECTION: dict[str, str] = {
+    "manage_users": "users",
+    "add_admins": "admins",
+    "delete_admins": "admins",
+    "manage_subscription": "subscription",
+    "manage_channels": "publish",
+    "manage_broadcast": "broadcast",
+    "manage_scheduled": "scheduled",
+    "manage_groups": "groups",
+    "manage_antiflood": "antiflood",
+    "view_stats": "stats",
+    "manage_settings": "settings",
+}
+
+
 def _permission_section_mismatch(perms: list[str], sections: list[str]) -> bool:
     if not perms or not sections:
         return False
-    map_perm_to_section = {
-        "manage_users": "users",
-        "add_admins": "admins",
-        "delete_admins": "admins",
-        "manage_subscription": "subscription",
-        "manage_channels": "publish",
-        "manage_broadcast": "broadcast",
-        "manage_scheduled": "scheduled",
-        "manage_groups": "groups",
-        "manage_antiflood": "antiflood",
-        "view_stats": "stats",
-        "manage_settings": "settings",
-    }
     for perm in perms:
-        section = map_perm_to_section.get(perm)
+        section = PERM_TO_SECTION.get(perm)
         if section and section not in sections:
             return True
     return False
@@ -857,15 +859,9 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await query.answer("✅ تم حفظ الصلاحيات بنجاح", show_alert=True)
             elif new_admin_id:
                 user_obj = db.query(User).filter_by(telegram_id=new_admin_id).first()
-                _map = {
-                    "manage_users": "users", "add_admins": "admins",
-                    "delete_admins": "admins", "manage_subscription": "subscription",
-                    "manage_channels": "publish", "manage_broadcast": "broadcast",
-                    "manage_scheduled": "scheduled", "manage_groups": "groups",
-                    "manage_antiflood": "antiflood", "view_stats": "stats",
-                    "manage_settings": "settings",
-                }
-                derived_sections = list({_map[p] for p in selected if p in _map})
+                if not user_obj:
+                    logger.warning("perms_save: user telegram_id=%s not found in DB", new_admin_id)
+                derived_sections = list({PERM_TO_SECTION[p] for p in selected if p in PERM_TO_SECTION})
                 db.add(AdminUser(
                     telegram_id=new_admin_id,
                     username=user_obj.username if user_obj else None,
