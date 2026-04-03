@@ -15,7 +15,7 @@ services:
       - "127.0.0.1:8081:8081"
     volumes:
       - bot_temp:/tmp/karar-bot
-      - ./cookies.txt:/app/cookies/cookies.txt:ro
+      - ${COOKIES_FILE:-./cookies.txt.example}:/app/cookies/cookies.txt:ro
     healthcheck:
       test: ["CMD", "python", "scripts/healthcheck.py"]
       interval: 30s
@@ -43,7 +43,7 @@ services:
         condition: service_healthy
     volumes:
       - bot_temp:/tmp/karar-bot
-      - ./cookies.txt:/app/cookies/cookies.txt:ro
+      - ${COOKIES_FILE:-./cookies.txt.example}:/app/cookies/cookies.txt:ro
     mem_limit: 3g
     cpus: "1.25"
     logging:

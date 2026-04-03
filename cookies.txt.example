@@ -1,0 +1,15 @@
+# Netscape HTTP Cookie File
+# https://curl.se/docs/http-cookies.html
+#
+# ضع هنا كوكيز yt-dlp بصيغة Netscape (Tab-separated).
+# احصل عليها من إضافة المتصفح "Get cookies.txt LOCALLY" أو ما يعادلها.
+# احفظ هذا الملف بمحاذاة الملف الذي ينتجه المتصفح مباشرةً.
+#
+# تنسيق كل سطر:
+#   domain  include_subdomains  path  secure  expires  name  value
+#
+# مثال:
+#   .youtube.com	TRUE	/	TRUE	1800000000	SID	xxxx...
+#
+# ملاحظة: لا تضع هذا الملف في مستودع عام (GitHub/GitLab)؛
+#          فهو يحتوي على بيانات جلسات حساسة.
