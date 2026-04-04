@@ -44,7 +44,10 @@ services:
       - "127.0.0.1:8081:8081"
     volumes:
       - bot_temp:/tmp/karar-bot
-      - ${COOKIES_FILE:-./cookies.txt.example}:/app/cookies/cookies.txt:ro
+      # Mount your real cookies file.  Copy cookies.txt.example → cookies.txt,
+      # fill it with your browser cookies, then set COOKIES_FILE=./cookies.txt in .env.
+      # If COOKIES_FILE is not set the container expects ./cookies.txt to exist.
+      - ${COOKIES_FILE:-./cookies.txt}:/app/cookies/cookies.txt:ro
     healthcheck:
       test: ["CMD", "python", "scripts/healthcheck.py"]
       interval: 30s
@@ -73,7 +76,10 @@ services:
         condition: service_healthy
     volumes:
       - bot_temp:/tmp/karar-bot
-      - ${COOKIES_FILE:-./cookies.txt.example}:/app/cookies/cookies.txt:ro
+      # Mount your real cookies file.  Copy cookies.txt.example → cookies.txt,
+      # fill it with your browser cookies, then set COOKIES_FILE=./cookies.txt in .env.
+      # If COOKIES_FILE is not set the container expects ./cookies.txt to exist.
+      - ${COOKIES_FILE:-./cookies.txt}:/app/cookies/cookies.txt:ro
     deploy:
       replicas: 2
       resources:

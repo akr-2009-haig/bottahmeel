@@ -208,6 +208,19 @@ YDL_BASE_OPTS = {
 }
 
 
+def _has_real_cookies(path: str) -> bool:
+    """Return True if the cookies file contains at least one non-comment, non-empty line."""
+    try:
+        with open(path) as fh:
+            for line in fh:
+                stripped = line.strip()
+                if stripped and not stripped.startswith("#"):
+                    return True
+    except OSError:
+        pass
+    return False
+
+
 def _apply_cookie_options(opts: dict[str, Any]) -> None:
     settings = load_settings()
     cookies_file = settings.ytdlp_cookies_file
@@ -215,7 +228,16 @@ def _apply_cookie_options(opts: dict[str, Any]) -> None:
 
     if cookies_file:
         if os.path.exists(cookies_file):
-            opts["cookiefile"] = cookies_file
+            if _has_real_cookies(cookies_file):
+                opts["cookiefile"] = cookies_file
+            else:
+                logger.warning(
+                    "YTDLP_COOKIES_FILE (%s) contains no cookie entries – "
+                    "it looks like the example/template file. "
+                    "Authenticated downloads will not work. "
+                    "Copy cookies.txt.example → cookies.txt and fill in your real browser cookies.",
+                    cookies_file,
+                )
         else:
             logger.warning("YTDLP_COOKIES_FILE is set but does not exist: %s", cookies_file)
 
