@@ -1,3 +1,4 @@
+import os
 import unittest
 from tempfile import NamedTemporaryFile
 from types import SimpleNamespace
@@ -60,6 +61,7 @@ class PlatformSupportTests(unittest.TestCase):
             # Write a minimal valid Netscape cookie entry so _has_real_cookies returns True
             cookie_file.write(".youtube.com\tTRUE\t/\tTRUE\t1800000000\tSID\ttest_value\n")
             cookie_file_name = cookie_file.name
+        self.addCleanup(os.unlink, cookie_file_name)
         opts = {}
         with patch("bot.utils.platforms.load_settings", return_value=SimpleNamespace(
             ytdlp_cookies_file=cookie_file_name,

@@ -235,7 +235,7 @@ def _apply_cookie_options(opts: dict[str, Any]) -> None:
                     "YTDLP_COOKIES_FILE (%s) contains no cookie entries – "
                     "it looks like the example/template file. "
                     "Authenticated downloads will not work. "
-                    "Copy cookies.txt.example → cookies.txt and fill in your real browser cookies.",
+                    "Copy cookies.txt.example -> cookies.txt and fill in your real browser cookies.",
                     cookies_file,
                 )
         else:
