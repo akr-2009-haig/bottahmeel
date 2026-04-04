@@ -1,3 +1,4 @@
+import os
 import unittest
 from tempfile import NamedTemporaryFile
 from types import SimpleNamespace
@@ -56,15 +57,19 @@ class PlatformSupportTests(unittest.TestCase):
         self.assertEqual(extractor_args["youtubetab"]["skip"], ["webpage"])
 
     def test_apply_cookie_options_uses_cookiefile_and_browser_profile(self):
-        with NamedTemporaryFile() as cookie_file:
-            opts = {}
-            with patch("bot.utils.platforms.load_settings", return_value=SimpleNamespace(
-                ytdlp_cookies_file=cookie_file.name,
-                ytdlp_cookies_from_browser="firefox:default-release",
-            )):
-                _apply_cookie_options(opts)
-            self.assertEqual(opts["cookiefile"], cookie_file.name)
-            self.assertEqual(opts["cookiesfrombrowser"], ("firefox", "default-release"))
+        with NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as cookie_file:
+            # Write a minimal valid Netscape cookie entry so _has_real_cookies returns True
+            cookie_file.write(".youtube.com\tTRUE\t/\tTRUE\t1800000000\tSID\ttest_value\n")
+            cookie_file_name = cookie_file.name
+        self.addCleanup(os.unlink, cookie_file_name)
+        opts = {}
+        with patch("bot.utils.platforms.load_settings", return_value=SimpleNamespace(
+            ytdlp_cookies_file=cookie_file_name,
+            ytdlp_cookies_from_browser="firefox:default-release",
+        )):
+            _apply_cookie_options(opts)
+        self.assertEqual(opts["cookiefile"], cookie_file_name)
+        self.assertEqual(opts["cookiesfrombrowser"], ("firefox", "default-release"))
 
     def test_classify_extraction_error_treats_youtube_bot_check_as_login_required(self):
         self.assertEqual(

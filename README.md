@@ -28,6 +28,10 @@ cd Karar-bots-downloader
 cp .env.example .env
 # عدّل .env
 
+# أنشئ ملف كوكيز قبل تشغيل الحاوية (مطلوب)
+cp cookies.txt.example cookies.txt
+# الصق كوكيزات متصفحك الحقيقية داخل cookies.txt ثم احفظ الملف
+
 docker compose up -d --build
 ```
 
@@ -49,6 +53,31 @@ curl http://127.0.0.1:8081/queuez
 - `REDIS_URL`
 - `BOT_MODE=webhook`
 - `QUEUE_BACKEND=redis`
+
+## إعداد ملف الكوكيز (مطلوب لتحميل يوتيوب)
+
+عند ظهور خطأ `Sign in to confirm you're not a bot` يجب توفير كوكيز حقيقية:
+
+```bash
+# 1. انسخ القالب
+cp cookies.txt.example cookies.txt
+
+# 2. احصل على كوكيزاتك من المتصفح
+#    استخدم إضافة "Get cookies.txt LOCALLY" من متصفح Chrome/Firefox
+#    بعد تسجيل الدخول إلى يوتيوب، ثم صدّر الملف بصيغة Netscape
+
+# 3. ضع محتوى الملف المُصدَّر داخل cookies.txt
+#    (استبدل محتوى الملف بالكامل بما أنتجه المتصفح)
+
+# 4. تأكد أن COOKIES_FILE=./cookies.txt موجود في .env
+grep COOKIES_FILE .env
+
+# 5. أعد تشغيل الحاوية
+docker compose restart bot worker
+```
+
+> **ملاحظة:** ملف `cookies.txt` مُدرج في `.gitignore` لحمايتك من نشر بيانات الجلسة عن طريق الخطأ.
+> لا تشاركه مع أحد ولا ترفعه إلى أي مستودع عام.
 
 ## Optional: authenticated downloads via cookies (YouTube/TikTok/Instagram)
 

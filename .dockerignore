@@ -8,3 +8,7 @@ __pycache__/
 .pytest_cache/
 tests/
 backups/
+# Never bake real or example cookies into the image; they are injected at runtime
+# via the COOKIES_FILE bind mount in docker-compose.
+cookies.txt
+cookies.txt.example
